@@ -6,3 +6,5 @@ plotly>=5.18
 yfinance>=0.2.40
 lxml>=5.0
 requests>=2.27
+# Norgate Data source (requires active subscription + NDU running)
+norgatedata>=1.0.74

@@ -88,6 +88,13 @@ def build_signal_frame(data: pd.DataFrame, config: StrategyConfig) -> pd.DataFra
     else:
         df["sma_exit"] = np.nan
 
+    # Cumulative RSI: rolling sum of RSI over the last N bars.
+    if config.exits.use_rsi_cum_exit:
+        n = config.exits.rsi_cum_periods
+        df["rsi_cum"] = df["rsi"].rolling(n, min_periods=n).sum()
+    else:
+        df["rsi_cum"] = np.nan
+
     patterns = detect_all(data, config.patterns)
     df["pattern"] = patterns["pattern"] if "pattern" in patterns else ""
     any_pattern = patterns["any_pattern"] if "any_pattern" in patterns else False
@@ -182,9 +189,14 @@ class BacktestEngine:
         rsi_val = df["rsi"].iat[i]
         bars_held = i - pos.entry_index
 
-        # Priority order: RSI -> time stop -> profit target -> stop loss -> SMA.
+        # Priority order: RSI -> cumulative RSI -> time stop -> profit target -> stop loss -> SMA.
         if cfg.use_rsi_exit and pd.notna(rsi_val) and rsi_val > cfg.rsi_exit_threshold:
             return f"RSI > {cfg.rsi_exit_threshold:g}"
+
+        if cfg.use_rsi_cum_exit:
+            rsi_cum_val = df["rsi_cum"].iat[i]
+            if pd.notna(rsi_cum_val) and rsi_cum_val > cfg.rsi_cum_threshold:
+                return f"RSI({cfg.rsi_cum_periods}) acum > {cfg.rsi_cum_threshold:g}"
 
         if cfg.use_max_bars and bars_held >= cfg.max_bars:
             return f"Time stop ({cfg.max_bars} bars)"
@@ -251,7 +263,12 @@ class BacktestEngine:
         return new_cash, trade
 
     # -------------------------------------------------------------------- main
-    def run(self) -> BacktestResult:
+    def run(self, progress=None) -> BacktestResult:
+        """Run the backtest.
+
+        *progress* is an optional callable ``(fraction: float) -> None`` called
+        approximately every 250 bars so the UI can update a progress bar.
+        """
         cfg = self.config
         df = self._prepare_signals()
         n = len(df)
@@ -270,7 +287,11 @@ class BacktestEngine:
         trades: List[Trade] = []
         equity = np.empty(n, dtype=float)
 
+        _step = max(1, n // 200)   # report ~200 times regardless of dataset size
+
         for i in range(n):
+            if progress and i % _step == 0:
+                progress(i / n)
             open_i = opens[i]
             close_i = closes[i]
 

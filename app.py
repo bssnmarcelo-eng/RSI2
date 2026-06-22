@@ -15,7 +15,7 @@ from dataclasses import replace
 import pandas as pd
 import streamlit as st
 
-from src import charts, data_loader, logger, optimizer, screener
+from src import charts, data_loader, logger, norgate_loader, optimizer, screener
 from src.backtest_engine import BacktestEngine
 from src.portfolio_engine import PortfolioEngine
 from src.performance_metrics import compute_metrics
@@ -55,6 +55,204 @@ occur at the next candle's open to avoid look-ahead bias. Test any strategy
 **out-of-sample** before considering real use. This tool is for research and
 education only and is **not** investment advice.
 """
+
+
+# =====================================================================
+# Sidebar — data source (CSV vs Norgate)
+# =====================================================================
+def build_data_source_params() -> dict:
+    """Render sidebar data-source widgets; return {"source", "adjustment", "frequency"}."""
+    st.sidebar.header("📡 Data Source")
+    source = st.sidebar.radio(
+        "Fonte de dados",
+        ["CSV upload", "Norgate Data"],
+        index=0,
+        horizontal=True,
+    )
+    adj  = norgate_loader.ADJ_LABELS[0]
+    freq = norgate_loader.FREQ_LABELS[0]   # "Semanal" default
+    if source == "Norgate Data":
+        freq = st.sidebar.selectbox(
+            "Periodicidade",
+            norgate_loader.FREQ_LABELS,
+            index=0,
+            help="Semanal é o padrão recomendado para estratégias de médio prazo.",
+        )
+        adj = st.sidebar.selectbox(
+            "Ajuste de preço",
+            norgate_loader.ADJ_LABELS,
+            index=0,
+            help="Total Return é o padrão para backtests — ajusta splits e dividendos.",
+        )
+        if not norgate_loader.is_available():
+            st.sidebar.error(
+                "⚠️ Norgate Data Updater (NDU) não está rodando "
+                "ou o pacote norgatedata não está instalado.\n\n"
+                "`pip install norgatedata`"
+            )
+    return {"source": source, "adjustment": adj, "frequency": freq}
+
+
+# ── Norgate UI helpers ────────────────────────────────────────────────────────
+
+def _ng_symbol_list(collection_type: str, collection_name: str) -> list[str]:
+    """Return symbol list for the chosen watchlist or database."""
+    if collection_type == "Watchlist":
+        return _ng_watchlist_symbols(collection_name)
+    return _ng_database_symbols(collection_name)
+
+
+def _ng_collection_ui(key_prefix: str) -> tuple[str, str]:
+    """Render watchlist/database picker; return (collection_type, collection_name)."""
+    ctype = st.radio(
+        "Tipo de coleção",
+        ["Watchlist", "Database"],
+        horizontal=True,
+        key=f"{key_prefix}_ctype",
+    )
+    if ctype == "Watchlist":
+        names = _ng_watchlists()
+        if not names:
+            st.warning("Nenhuma watchlist encontrada no Norgate.")
+            return ctype, ""
+        # Suggest the most useful default for equity backtesting.
+        default_idx = next(
+            (i for i, n in enumerate(names) if "Current & Past" in n and "S&P 500" in n),
+            0,
+        )
+        name = st.selectbox("Watchlist", names, index=default_idx, key=f"{key_prefix}_wl")
+    else:
+        names = _ng_databases()
+        if not names:
+            st.warning("Nenhum database encontrado no Norgate.")
+            return ctype, ""
+        default_idx = next(
+            (i for i, n in enumerate(names) if "US Equities" in n), 0
+        )
+        name = st.selectbox("Database", names, index=default_idx, key=f"{key_prefix}_db")
+    return ctype, name
+
+
+def _ng_date_range_ui(key_prefix: str):
+    """Date range widgets for Norgate mode; returns (start_date_str, end_date_str)."""
+    import datetime
+    c1, c2 = st.columns(2)
+    start = c1.date_input(
+        "Data inicial",
+        value=datetime.date(1990, 1, 1),
+        min_value=datetime.date(1990, 1, 1),
+        key=f"{key_prefix}_start",
+    )
+    end = c2.date_input(
+        "Data final",
+        value=datetime.date.today(),
+        min_value=datetime.date(1990, 1, 1),
+        key=f"{key_prefix}_end",
+    )
+    if start > end:
+        st.error("Data inicial deve ser anterior à data final.")
+        return None, None
+    return str(start), str(end)
+
+
+def collect_norgate_single(cfg: StrategyConfig, data_src: dict):
+    """Norgate data-loading UI for single-asset mode.
+
+    Returns (data_df, ticker_str) or (None, None) if not ready.
+    """
+    if not norgate_loader.is_available():
+        st.error("Norgate Data Updater não está rodando. Inicie o NDU e tente novamente.")
+        return None, None
+
+    st.header("1 · Selecionar ativo")
+    ctype, cname = _ng_collection_ui("ng_single")
+    if not cname:
+        return None, None
+
+    with st.spinner("Carregando lista de ativos do Norgate…"):
+        symbols = _ng_symbol_list(ctype, cname)
+    if not symbols:
+        st.error(f"Nenhum símbolo encontrado em '{cname}'.")
+        return None, None
+
+    ticker = st.selectbox(
+        f"Ativo ({len(symbols)} disponíveis)",
+        symbols,
+        key="ng_single_ticker",
+    )
+
+    st.header("2 · Período")
+    start_str, end_str = _ng_date_range_ui("ng_single")
+    if start_str is None:
+        return None, None
+
+    with st.spinner(f"Carregando dados de {ticker}…"):
+        df, warns = norgate_loader.fetch_price(
+            ticker, data_src["adjustment"], start_str, end_str,
+            frequency_label=data_src.get("frequency", "Semanal"),
+        )
+    for w in warns:
+        st.warning(w)
+    if df.empty:
+        st.error(f"Sem dados para {ticker} no período selecionado.")
+        return None, None
+
+    st.caption(
+        f"**{ticker}** · {len(df)} barras "
+        f"({df.index.min().date()} → {df.index.max().date()}) · "
+        f"{data_src.get('frequency', 'Semanal')} · ajuste: {data_src['adjustment']}"
+    )
+    cfg.ticker = ticker
+    return df, ticker
+
+
+def collect_norgate_multi(cfg: StrategyConfig, data_src: dict, select_label: str):
+    """Norgate data-loading UI for multi-asset modes.
+
+    Returns data_by_ticker dict or None if not ready.
+    """
+    if not norgate_loader.is_available():
+        st.error("Norgate Data Updater não está rodando. Inicie o NDU e tente novamente.")
+        return None
+
+    st.header("1 · Selecionar ativos")
+    ctype, cname = _ng_collection_ui("ng_multi")
+    if not cname:
+        return None
+
+    with st.spinner("Carregando lista de ativos do Norgate…"):
+        all_symbols = _ng_symbol_list(ctype, cname)
+    if not all_symbols:
+        st.error(f"Nenhum símbolo encontrado em '{cname}'.")
+        return None
+
+    st.caption(
+        f"**{len(all_symbols)}** ativos em '{cname}' — inclui deslistados "
+        f"e constituintes históricos."
+    )
+    default_sel = all_symbols[:50] if len(all_symbols) > 50 else all_symbols
+    selected = st.multiselect(
+        select_label,
+        all_symbols,
+        default=default_sel,
+        key="ng_multi_sel",
+    )
+    if not selected:
+        st.warning("Selecione ao menos um ativo.")
+        return None
+
+    st.header("2 · Período")
+    start_str, end_str = _ng_date_range_ui("ng_multi")
+    if start_str is None:
+        return None
+
+    if not cfg.patterns.any_enabled():
+        st.error("Habilite ao menos um padrão de candlestick no sidebar.")
+        return None
+
+    return {"_pending": True, "symbols": selected, "start": start_str,
+            "end": end_str, "adjustment": data_src["adjustment"],
+            "frequency": data_src.get("frequency", "Semanal")}
 
 
 # =====================================================================
@@ -121,6 +319,17 @@ def build_strategy_params() -> StrategyConfig:
         "Stop loss at signal candle's low", value=False,
         help="Intrabar hard stop: if a bar's low pierces the signal (pattern) candle's "
              "low, exit within that bar at the stop level (or at the open if it gaps below).")
+    use_rsi_cum_exit = st.sidebar.checkbox(
+        "Exit when RSI(n) acumulado > X", value=False,
+        help="Soma do RSI dos últimos N períodos. Captura exaustão da reversão mesmo quando "
+             "o RSI individual ainda não atingiu o threshold padrão.")
+    col_rc1, col_rc2 = st.sidebar.columns(2)
+    rsi_cum_periods = col_rc1.number_input("Períodos (N)", min_value=1, max_value=50,
+                                           value=2, step=1, key="rsi_cum_n",
+                                           disabled=not use_rsi_cum_exit)
+    rsi_cum_threshold = col_rc2.number_input("Threshold (X)", min_value=0.0, max_value=1000.0,
+                                             value=100.0, step=5.0, key="rsi_cum_x",
+                                             disabled=not use_rsi_cum_exit)
 
     st.sidebar.header("🧾 Transaction Costs")
     st.sidebar.caption("Applied on every fill — entry and exit each count as one order.")
@@ -172,6 +381,9 @@ def build_strategy_params() -> StrategyConfig:
             use_stop_loss=use_sl, stop_loss_pct=float(sl_pct),
             use_sma_exit=use_sma, sma_period=int(sma_period),
             use_signal_low_stop=use_signal_low_stop,
+            use_rsi_cum_exit=use_rsi_cum_exit,
+            rsi_cum_periods=int(rsi_cum_periods),
+            rsi_cum_threshold=float(rsi_cum_threshold),
         ),
         costs=costs,
     )
@@ -264,9 +476,14 @@ def render_metrics(metrics: dict) -> None:
 def render_charts(result) -> None:
     cfg = result.config
     st.subheader("📈 Charts")
-    st.plotly_chart(charts.price_chart(result.data, result.trades, cfg.ticker), use_container_width=True)
-    st.plotly_chart(charts.rsi_chart(result.data, cfg.rsi_entry_threshold,
-                                     cfg.exits.rsi_exit_threshold), use_container_width=True)
+    st.plotly_chart(
+        charts.price_chart(
+            result.data, result.trades, cfg.ticker,
+            rsi_entry=cfg.rsi_entry_threshold,
+            rsi_exit=cfg.exits.rsi_exit_threshold,
+        ),
+        use_container_width=True,
+    )
     c1, c2 = st.columns(2)
     c1.plotly_chart(charts.equity_chart(result.equity_curve, cfg.initial_capital), use_container_width=True)
     c2.plotly_chart(charts.drawdown_chart(result.equity_curve), use_container_width=True)
@@ -413,46 +630,62 @@ def date_range_picker(combined, label_suffix=""):
 # =====================================================================
 # Mode flows
 # =====================================================================
-def run_single_mode(cfg: StrategyConfig, note: str = ""):
-    st.header("1 · Load data")
-    uploaded = st.file_uploader(
-        "Upload an OHLCV CSV (columns: date, ticker/symbol, open, high, low, close, "
-        "adj/adjusted close, volume). Decimal commas, ; separators and DD/MM/YYYY dates are handled.",
-        type=["csv"], accept_multiple_files=False)
-    if uploaded is None:
-        st.info("⬆️ Upload a CSV to begin. All processing is local — no external APIs are used.")
-        return
-    combined = load_combined(uploaded)
-    if combined.empty:
-        return
+def run_single_mode(cfg: StrategyConfig, note: str = "", data_src: dict | None = None):
+    data_src = data_src or {"source": "CSV upload", "adjustment": norgate_loader.ADJ_LABELS[0]}
 
-    st.header("2 · Select ticker & date range")
-    tickers = data_loader.get_tickers(combined)
-    selected = tickers[0] if len(tickers) == 1 else st.selectbox("Ticker", tickers) if tickers else None
-    if tickers and len(tickers) == 1:
-        st.caption(f"Single ticker detected: **{selected}**")
-    start, end = date_range_picker(combined)
-    if start is None:
-        return
+    # ── data loading ──────────────────────────────────────────────────────────
+    if data_src["source"] == "Norgate Data":
+        data, selected = collect_norgate_single(cfg, data_src)
+        if data is None:
+            return
+    else:
+        st.header("1 · Load data")
+        uploaded = st.file_uploader(
+            "Upload an OHLCV CSV (columns: date, ticker/symbol, open, high, low, close, "
+            "adj/adjusted close, volume). Decimal commas, ; separators and DD/MM/YYYY dates are handled.",
+            type=["csv"], accept_multiple_files=False)
+        if uploaded is None:
+            st.info("⬆️ Upload a CSV to begin. All processing is local — no external APIs are used.")
+            return
+        combined = load_combined(uploaded)
+        if combined.empty:
+            return
 
-    data, warns = data_loader.prepare(combined, ticker=selected, start=start, end=end)
-    for w in warns:
-        st.warning(w)
-    if data.empty:
-        st.error("No data in the selected range.")
-        return
-    cfg.ticker = selected or ""
+        st.header("2 · Select ticker & date range")
+        tickers = data_loader.get_tickers(combined)
+        selected = tickers[0] if len(tickers) == 1 else st.selectbox("Ticker", tickers) if tickers else None
+        if tickers and len(tickers) == 1:
+            st.caption(f"Single ticker detected: **{selected}**")
+        start, end = date_range_picker(combined)
+        if start is None:
+            return
+
+        data, warns = data_loader.prepare(combined, ticker=selected, start=start, end=end)
+        for w in warns:
+            st.warning(w)
+        if data.empty:
+            st.error("No data in the selected range.")
+            return
+        cfg.ticker = selected or ""
+
     if not cfg.patterns.any_enabled():
         st.error("Enable at least one candlestick pattern in the sidebar.")
         return
 
+    # ── run ───────────────────────────────────────────────────────────────────
     st.header("3 · Run backtest")
     st.caption(f"Loaded **{len(data)}** candles ({data.index.min().date()} → {data.index.max().date()}).")
     if not st.button("▶️ Run Backtest", type="primary"):
         return
-    with st.spinner("Running candle-by-candle backtest…"):
-        result = BacktestEngine(data, cfg).run()
-        metrics = compute_metrics(result.equity_curve, result.trades, cfg.initial_capital, len(data))
+    _n = len(data)
+    _bar = st.progress(0.0, text=f"Processando {cfg.ticker} · 0 / {_n:,} barras…")
+    result = BacktestEngine(data, cfg).run(
+        progress=lambda p: _bar.progress(
+            p, text=f"Processando {cfg.ticker} · {int(p * _n):,} / {_n:,} barras…"
+        )
+    )
+    _bar.progress(1.0, text=f"Concluído! {_n:,} barras · {len(result.trades)} trades")
+    metrics = compute_metrics(result.equity_curve, result.trades, cfg.initial_capital, _n)
     for w in result.warnings:
         st.warning(w)
     render_metrics(metrics)
@@ -473,12 +706,30 @@ def run_single_mode(cfg: StrategyConfig, note: str = ""):
               "config": logger.config_dict(cfg), "metrics": metrics})
 
 
-def collect_multi_asset_data(cfg: StrategyConfig, select_label: str):
-    """Shared steps 1–2 for the multi-asset modes: upload, pick tickers, date range.
+def collect_multi_asset_data(
+    cfg: StrategyConfig,
+    select_label: str,
+    data_src: dict | None = None,
+):
+    """Shared steps 1–2 for multi-asset modes: load data, pick tickers, date range.
 
-    Returns a dict ``{ticker: cleaned_ohlc}`` ready for backtesting, or ``None`` if
-    the user has not supplied enough to proceed yet.
+    Supports both CSV upload and Norgate Data source.
+    Returns a dict ``{ticker: cleaned_ohlc}`` or ``None`` if not ready.
     """
+    data_src = data_src or {"source": "CSV upload", "adjustment": norgate_loader.ADJ_LABELS[0]}
+
+    # ── Norgate path ──────────────────────────────────────────────────────────
+    if data_src["source"] == "Norgate Data":
+        pending = collect_norgate_multi(cfg, data_src, select_label)
+        if pending is None:
+            return None
+
+        # pending is returned here; actual data fetch happens in the mode function
+        # after the Run button is pressed (so we defer to avoid loading all data
+        # on every sidebar interaction).
+        return pending
+
+    # ── CSV path ─────────────────────────────────────────────────────────────
     st.header("1 · Load data")
     uploaded = st.file_uploader(
         "Upload one CSV with multiple tickers (ticker/symbol column) **or** several "
@@ -526,27 +777,82 @@ def collect_multi_asset_data(cfg: StrategyConfig, select_label: str):
     return data_by_ticker
 
 
-def run_portfolio_mode(cfg: StrategyConfig, pconf: PortfolioConfig, note: str = ""):
-    data_by_ticker = collect_multi_asset_data(cfg, "Tickers in the portfolio")
-    if data_by_ticker is None:
+def _resolve_norgate_pending(pending: dict, cfg: StrategyConfig) -> dict | None:
+    """Fetch Norgate data for a pending multi-asset spec (called inside Run spinner).
+
+    Returns a ready {ticker: df} dict, or None on failure.
+    """
+    symbols = pending["symbols"]
+    min_bars = max(cfg.rsi_period + 2, 5)
+    bar = st.progress(0.0, text="Baixando dados do Norgate…")
+
+    data, warns, skipped = norgate_loader.fetch_many(
+        symbols,
+        adjustment_label=pending["adjustment"],
+        start_date=pending["start"],
+        end_date=pending["end"],
+        min_bars=min_bars,
+        frequency_label=pending.get("frequency", "Semanal"),
+        progress=lambda p: bar.progress(p, text="Baixando dados do Norgate…"),
+    )
+    bar.empty()
+    for w in warns:
+        st.warning(w)
+    if skipped:
+        st.warning(
+            f"Ignorados (sem dados suficientes no período): "
+            f"{', '.join(skipped[:20])}"
+            + (f" … e mais {len(skipped) - 20}" if len(skipped) > 20 else "")
+        )
+    if not data:
+        st.error("Nenhum ativo com dados válidos no período selecionado.")
+        return None
+    return data
+
+
+def run_portfolio_mode(cfg: StrategyConfig, pconf: PortfolioConfig, note: str = "",
+                       data_src: dict | None = None):
+    pending = collect_multi_asset_data(cfg, "Tickers in the portfolio", data_src)
+    if pending is None:
         return
 
     st.header("3 · Run backtest")
-    total_bars = sum(len(d) for d in data_by_ticker.values())
-    if pconf.sizing_mode == PortfolioSizing.FULL_EQUITY:
-        sizing_txt = "**100%**/trade · **unlimited** buying power"
+    is_pending = isinstance(pending, dict) and pending.get("_pending")
+    if not is_pending:
+        data_by_ticker = pending
+        total_bars = sum(len(d) for d in data_by_ticker.values())
+        if pconf.sizing_mode == PortfolioSizing.FULL_EQUITY:
+            sizing_txt = "**100%**/trade · **unlimited** buying power"
+        else:
+            sizing_txt = f"**{pconf.pct_per_trade:g}%**/trade · **{pconf.leverage:g}×** leverage"
+        st.caption(f"Portfolio of **{len(data_by_ticker)}** assets · "
+                   f"capital **{fmt_money(pconf.initial_capital, 0)}** · {sizing_txt} · "
+                   f"{total_bars:,} candle-rows.")
     else:
-        sizing_txt = f"**{pconf.pct_per_trade:g}%**/trade · **{pconf.leverage:g}×** leverage"
-    st.caption(f"Portfolio of **{len(data_by_ticker)}** assets · "
-               f"capital **{fmt_money(pconf.initial_capital, 0)}** · {sizing_txt} · "
-               f"{total_bars:,} candle-rows.")
+        st.caption(
+            f"**{len(pending['symbols'])}** ativos selecionados via Norgate · "
+            f"capital **{fmt_money(pconf.initial_capital, 0)}** · "
+            f"{pending['start']} → {pending['end']}"
+        )
     if not st.button("▶️ Run Portfolio Backtest", type="primary"):
         return
-    with st.spinner(f"Running portfolio backtest across {len(data_by_ticker)} assets…"):
-        result = PortfolioEngine(data_by_ticker, cfg, pconf).run()
-        metrics = compute_metrics(result.equity_curve, result.trades, pconf.initial_capital,
-                                  len(result.equity_curve))
-        metrics["exposure"] = result.time_in_market  # portfolio-appropriate exposure
+    _bar = st.progress(0.0, text="Preparando sinais…")
+    if is_pending:
+        data_by_ticker = _resolve_norgate_pending(pending, cfg)
+        if data_by_ticker is None:
+            _bar.empty()
+            return
+    _n_assets = len(data_by_ticker)
+    _bar.progress(0.0, text=f"Executando portfolio · {_n_assets} ativos…")
+    result = PortfolioEngine(data_by_ticker, cfg, pconf).run(
+        progress=lambda p: _bar.progress(
+            p, text=f"Executando portfolio · {p:.0%} do calendário processado…"
+        )
+    )
+    _bar.progress(1.0, text=f"Concluído! {_n_assets} ativos · {len(result.trades)} trades")
+    metrics = compute_metrics(result.equity_curve, result.trades, pconf.initial_capital,
+                              len(result.equity_curve))
+    metrics["exposure"] = result.time_in_market
     for w in result.warnings:
         st.warning(w)
     render_portfolio_metrics(metrics, result)
@@ -603,6 +909,101 @@ def aggregate_trade_stats(trades: pd.DataFrame) -> dict:
     }
 
 
+def _max_consecutive(bool_series) -> int:
+    """Max run of consecutive True values in a boolean iterable."""
+    max_run = cur = 0
+    for v in bool_series:
+        if v:
+            cur += 1
+            max_run = max(max_run, cur)
+        else:
+            cur = 0
+    return max_run
+
+
+def per_asset_summary_table(trades: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Rich per-ticker statistics. Returns (display_df, raw_df) sorted by Total PnL desc."""
+    import numpy as np
+
+    rows = []
+    for ticker, g in trades.groupby("ticker"):
+        g = g.sort_values("entry_date").reset_index(drop=True)
+        nr = g["net_return"]
+        pnl = g["pnl"]
+        wins_mask = nr > 0
+        losses_mask = nr < 0
+        n = len(g)
+        n_wins = int(wins_mask.sum())
+        n_losses = int(losses_mask.sum())
+        n_be = n - n_wins - n_losses
+
+        gross_win = float(pnl[wins_mask].sum())
+        gross_loss = float(abs(pnl[losses_mask].sum()))
+
+        avg_gain = float(nr[wins_mask].mean()) if n_wins else 0.0
+        avg_loss = float(nr[losses_mask].mean()) if n_losses else 0.0  # negative
+        payoff = abs(avg_gain / avg_loss) if avg_loss < 0 else (float("inf") if avg_gain > 0 else 0.0)
+        pf = (gross_win / gross_loss) if gross_loss > 0 else (float("inf") if gross_win > 0 else 0.0)
+        win_rate = n_wins / n if n else 0.0
+
+        if n_wins == 0:
+            kelly = 0.0
+        elif n_losses == 0:
+            kelly = win_rate
+        elif payoff == 0.0:
+            kelly = 0.0
+        else:
+            kelly = win_rate - (1.0 - win_rate) / payoff
+
+        std_ret = float(nr.std(ddof=1)) if n > 1 else 0.0
+        median_ret = float(nr.median()) if n else 0.0
+
+        rows.append({
+            "Ticker": ticker,
+            "Trades": n,
+            "Wins": n_wins,
+            "Losses": n_losses,
+            "BE": n_be,
+            "Win Rate": win_rate,
+            "Loss Rate": n_losses / n if n else 0.0,
+            "Profit Factor": pf,
+            "Payoff Ratio": payoff,
+            "Avg Gain": avg_gain,
+            "Avg Loss": avg_loss,
+            "Expectancy": float(nr.mean()) if n else 0.0,
+            "Std Return": std_ret,
+            "Median Return": median_ret,
+            "Best Trade": float(nr.max()) if n else 0.0,
+            "Worst Trade": float(nr.min()) if n else 0.0,
+            "Total PnL": float(pnl.sum()),
+            "Avg PnL": float(pnl.mean()) if n else 0.0,
+            "Avg Holding": float(g["bars_held"].mean()) if n else 0.0,
+            "Max Holding": int(g["bars_held"].max()) if n else 0,
+            "Max Consec Wins": _max_consecutive(wins_mask),
+            "Max Consec Losses": _max_consecutive(losses_mask),
+            "Kelly %": kelly,
+        })
+
+    raw = (pd.DataFrame(rows)
+           .sort_values("Total PnL", ascending=False)
+           .reset_index(drop=True))
+
+    disp = raw.copy()
+    pct_cols = ["Win Rate", "Loss Rate", "Avg Gain", "Avg Loss", "Expectancy",
+                "Std Return", "Median Return", "Best Trade", "Worst Trade", "Kelly %"]
+    for col in pct_cols:
+        disp[col] = raw[col].map(fmt_pct)
+    for col in ["Total PnL", "Avg PnL"]:
+        disp[col] = raw[col].map(fmt_money)
+    disp["Profit Factor"] = raw["Profit Factor"].map(
+        lambda v: "∞" if v == float("inf") else fmt_num(v))
+    disp["Payoff Ratio"] = raw["Payoff Ratio"].map(
+        lambda v: "∞" if v == float("inf") else fmt_num(v))
+    disp["Avg Holding"] = raw["Avg Holding"].map(lambda v: fmt_num(v, 1))
+
+    return disp, raw
+
+
 def render_trades_overview(trades: pd.DataFrame, n_assets: int) -> None:
     """Aggregate trades panorama + table of every operation (per-asset mode)."""
     st.subheader("📊 Trades Overview")
@@ -633,7 +1034,63 @@ def render_trades_overview(trades: pd.DataFrame, n_assets: int) -> None:
     r3[2].metric("Worst trade", fmt_pct(s["worst"]))
     r3[3].metric("Avg holding (bars)", fmt_num(s["avg_holding"], 1))
 
+    # Per-asset breakdown table.
+    st.subheader("📋 Per-Asset Breakdown")
+    st.caption(
+        "Each row is one ticker backtested independently. "
+        "Sorted by Total PnL descending. "
+        "**Payoff Ratio** = avg gain / |avg loss|. "
+        "**Kelly %** = optimal fraction of capital per trade (full Kelly — halve it in practice)."
+    )
+    sort_col = st.selectbox(
+        "Sort by",
+        ["Total PnL", "Trades", "Win Rate", "Profit Factor", "Expectancy",
+         "Best Trade", "Worst Trade", "Max Consec Wins", "Max Consec Losses",
+         "Avg Holding", "Kelly %"],
+        index=0,
+        key="per_asset_sort",
+    )
+    disp_tbl, raw_tbl = per_asset_summary_table(trades)
+    # Re-sort display by the chosen column using the raw numeric values.
+    sort_order = raw_tbl.sort_values(sort_col, ascending=False).index
+    disp_sorted = disp_tbl.loc[sort_order].reset_index(drop=True)
+    st.caption("💡 Clique em uma linha para abrir o gráfico do ativo com marcação das operações.")
+    event = st.dataframe(
+        disp_sorted,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="per_asset_tbl",
+    )
+    st.download_button(
+        "⬇️ Download per-asset summary (CSV)",
+        data=raw_tbl.sort_values(sort_col, ascending=False).to_csv(index=False).encode("utf-8"),
+        file_name="per_asset_summary.csv",
+        mime="text/csv",
+        key="per_asset_csv",
+    )
+
+    # Chart drill-down: show chart for the selected row's ticker.
+    sel_rows = (event.selection.rows
+                if event and hasattr(event, "selection") and event.selection.rows
+                else [])
+    if sel_rows:
+        sel_ticker = disp_sorted.iloc[sel_rows[0]]["Ticker"]
+        res = st.session_state.get("_per_asset_results", {}).get(sel_ticker)
+        if res is not None:
+            st.subheader(f"📈 {sel_ticker} — Gráfico de Preço & Sinais")
+            st.plotly_chart(
+                charts.price_chart(
+                    res.data, res.trades, sel_ticker,
+                    rsi_entry=res.config.rsi_entry_threshold,
+                    rsi_exit=res.config.exits.rsi_exit_threshold,
+                ),
+                use_container_width=True,
+            )
+
     # Distribution of all trade returns.
+    st.subheader("📈 Return Distribution (all assets pooled)")
     st.plotly_chart(charts.returns_histogram(trades), use_container_width=True)
 
     # Table with every operation (all assets), most recent first.
@@ -663,48 +1120,84 @@ def render_trades_overview(trades: pd.DataFrame, n_assets: int) -> None:
                        file_name="all_operations.csv", mime="text/csv", key="all_ops_csv")
 
 
-def run_per_asset_mode(cfg: StrategyConfig, note: str = ""):
-    data_by_ticker = collect_multi_asset_data(cfg, "Tickers to test independently")
-    if data_by_ticker is None:
+def run_per_asset_mode(cfg: StrategyConfig, note: str = "", data_src: dict | None = None):
+    pending = collect_multi_asset_data(cfg, "Tickers to test independently", data_src)
+    if pending is None:
+        st.session_state.pop("_per_asset_combined", None)
+        st.session_state.pop("_per_asset_results", None)
         return
+
+    is_pending = isinstance(pending, dict) and pending.get("_pending")
 
     st.header("3 · Run backtest")
-    st.caption(f"Testing **{len(data_by_ticker)}** assets independently · "
-               f"**{fmt_money(cfg.initial_capital, 0)}** capital applied to each · "
-               f"trade stats pooled across all assets.")
-    if not st.button("▶️ Run Per-Asset Backtests", type="primary"):
-        return
+    if not is_pending:
+        data_by_ticker = pending
+        st.caption(f"Testing **{len(data_by_ticker)}** assets independently · "
+                   f"**{fmt_money(cfg.initial_capital, 0)}** capital applied to each · "
+                   f"trade stats pooled across all assets.")
+    else:
+        data_by_ticker = None
+        st.caption(
+            f"**{len(pending['symbols'])}** ativos selecionados via Norgate · "
+            f"capital **{fmt_money(cfg.initial_capital, 0)}** por ativo · "
+            f"{pending['start']} → {pending['end']}"
+        )
 
-    all_trades = []
-    with st.spinner(f"Backtesting {len(data_by_ticker)} assets independently…"):
-        for t, d in data_by_ticker.items():
+    if st.button("▶️ Run Per-Asset Backtests", type="primary"):
+        if is_pending:
+            data_by_ticker = _resolve_norgate_pending(pending, cfg)
+            if data_by_ticker is None:
+                return
+        all_trades = []
+        results_by_ticker = {}
+        _total = len(data_by_ticker)
+        _bar = st.progress(0.0, text=f"0 / {_total} ativos processados…")
+        for _idx, (t, d) in enumerate(data_by_ticker.items()):
+            _bar.progress(
+                _idx / _total,
+                text=f"[{_idx + 1}/{_total}] {t} · {len(d):,} barras…",
+            )
             res = BacktestEngine(d, replace(cfg, ticker=t)).run()
+            results_by_ticker[t] = res
             if not res.trades.empty:
                 all_trades.append(res.trades)
-    combined = pd.concat(all_trades, ignore_index=True) if all_trades else pd.DataFrame(
-        columns=["ticker", "signal_date", "rsi_at_signal", "pattern", "entry_date",
-                 "entry_price", "exit_date", "exit_price", "exit_reason", "bars_held",
-                 "gross_return", "net_return", "pnl"])
-    render_trades_overview(combined, len(data_by_ticker))
+        _bar.progress(1.0, text=f"Concluído! {_total} ativos · {sum(len(r.trades) for r in results_by_ticker.values())} trades")
 
-    stats = aggregate_trade_stats(combined) if not combined.empty else {}
-    starts = [d.index.min() for d in data_by_ticker.values()]
-    ends = [d.index.max() for d in data_by_ticker.values()]
-    save_to_log(
-        "Per-asset",
-        summary={"note": note, "tickers": ", ".join(sorted(data_by_ticker.keys())),
-                 "n_assets": len(data_by_ticker),
-                 "start": str(min(starts).date()), "end": str(max(ends).date()),
-                 "n_trades": stats.get("total", 0), "win_rate": stats.get("win_rate", 0.0),
-                 "loss_rate": stats.get("loss_rate", 0.0),
-                 "profit_factor": stats.get("profit_factor", 0.0),
-                 "expectancy": stats.get("expectancy_ret", 0.0),
-                 "total_pnl": stats.get("total_pnl", 0.0),
-                 "avg_holding": stats.get("avg_holding", 0.0)},
-        tables={"all_operations": combined},
-        full={"meta": {"tickers": sorted(data_by_ticker.keys()), "n_assets": len(data_by_ticker),
-                       "start": str(min(starts).date()), "end": str(max(ends).date())},
-              "config": logger.config_dict(cfg), "metrics": stats})
+        combined = pd.concat(all_trades, ignore_index=True) if all_trades else pd.DataFrame(
+            columns=["ticker", "signal_date", "rsi_at_signal", "pattern", "entry_date",
+                     "entry_price", "exit_date", "exit_price", "exit_reason", "bars_held",
+                     "gross_return", "net_return", "pnl"])
+
+        # Persist so reruns triggered by row-clicks can still render everything.
+        st.session_state["_per_asset_results"] = results_by_ticker
+        st.session_state["_per_asset_combined"] = combined
+        st.session_state["_per_asset_n"] = len(data_by_ticker)
+
+        stats = aggregate_trade_stats(combined) if not combined.empty else {}
+        starts = [d.index.min() for d in data_by_ticker.values()]
+        ends = [d.index.max() for d in data_by_ticker.values()]
+        save_to_log(
+            "Per-asset",
+            summary={"note": note, "tickers": ", ".join(sorted(data_by_ticker.keys())),
+                     "n_assets": len(data_by_ticker),
+                     "start": str(min(starts).date()), "end": str(max(ends).date()),
+                     "n_trades": stats.get("total", 0), "win_rate": stats.get("win_rate", 0.0),
+                     "loss_rate": stats.get("loss_rate", 0.0),
+                     "profit_factor": stats.get("profit_factor", 0.0),
+                     "expectancy": stats.get("expectancy_ret", 0.0),
+                     "total_pnl": stats.get("total_pnl", 0.0),
+                     "avg_holding": stats.get("avg_holding", 0.0)},
+            tables={"all_operations": combined},
+            full={"meta": {"tickers": sorted(data_by_ticker.keys()), "n_assets": len(data_by_ticker),
+                           "start": str(min(starts).date()), "end": str(max(ends).date())},
+                  "config": logger.config_dict(cfg), "metrics": stats})
+
+    # Always render from session_state — survives every rerun (row clicks, sort changes, etc).
+    if "_per_asset_combined" in st.session_state:
+        render_trades_overview(
+            st.session_state["_per_asset_combined"],
+            st.session_state.get("_per_asset_n", 0),
+        )
 
 
 # =====================================================================
@@ -822,10 +1315,12 @@ def render_optimizer_results(results: pd.DataFrame, ranges: dict, objective: str
     return ranked
 
 
-def run_optimizer_mode(cfg: StrategyConfig, note: str = ""):
-    data_by_ticker = collect_multi_asset_data(cfg, "Tickers in the optimization universe")
-    if data_by_ticker is None:
+def run_optimizer_mode(cfg: StrategyConfig, note: str = "", data_src: dict | None = None):
+    pending = collect_multi_asset_data(cfg, "Tickers in the optimization universe", data_src)
+    if pending is None:
         return
+    is_pending = isinstance(pending, dict) and pending.get("_pending")
+    data_by_ticker = None if is_pending else pending
 
     st.header("3 · Optimization setup")
     ranges = build_param_ranges()
@@ -854,6 +1349,11 @@ def run_optimizer_mode(cfg: StrategyConfig, note: str = ""):
 
     if not st.button("▶️ Run Optimization", type="primary"):
         return
+
+    if is_pending:
+        data_by_ticker = _resolve_norgate_pending(pending, cfg)
+        if data_by_ticker is None:
+            return
 
     bar = st.progress(0.0, text="Running grid search…")
     results, split_dt = optimizer.run_grid(
@@ -891,6 +1391,25 @@ def run_optimizer_mode(cfg: StrategyConfig, note: str = ""):
 
 
 # =====================================================================
+# Norgate Data — cached discovery helpers (1-hour TTL)
+# =====================================================================
+@st.cache_data(ttl=3600, show_spinner=False)
+def _ng_watchlists():
+    return norgate_loader.get_watchlists()
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _ng_watchlist_symbols(name: str):
+    return norgate_loader.get_watchlist_symbols(name)
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _ng_databases():
+    return norgate_loader.get_databases()
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _ng_database_symbols(name: str):
+    return norgate_loader.get_database_symbols(name)
+
+
 # Market Screening mode
 # =====================================================================
 @st.cache_data(ttl=86_400, show_spinner=False)
@@ -1055,6 +1574,8 @@ def main() -> None:
         st.caption(DISCLAIMER)
         return
 
+    data_src = build_data_source_params()
+
     note = st.sidebar.text_input(
         "Run label / note (optional)",
         help="Saved with the run in the backtest log to help you find it later "
@@ -1063,16 +1584,16 @@ def main() -> None:
     cfg = build_strategy_params()
     if mode.startswith("Portfolio"):
         pconf = build_portfolio_config()
-        run_portfolio_mode(cfg, pconf, note)
+        run_portfolio_mode(cfg, pconf, note, data_src)
     elif mode.startswith("Per-asset"):
         cfg = build_single_sizing(cfg)
-        run_per_asset_mode(cfg, note)
+        run_per_asset_mode(cfg, note, data_src)
     elif mode.startswith("Optimizer"):
         cfg = build_single_sizing(cfg)
-        run_optimizer_mode(cfg, note)
+        run_optimizer_mode(cfg, note, data_src)
     else:
         cfg = build_single_sizing(cfg)
-        run_single_mode(cfg, note)
+        run_single_mode(cfg, note, data_src)
 
     st.markdown("---")
     st.caption(DISCLAIMER)

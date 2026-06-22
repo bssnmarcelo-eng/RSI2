@@ -158,7 +158,7 @@ class PortfolioEngine:
         return cash, trade
 
     # -------------------------------------------------------------------- run
-    def run(self) -> PortfolioResult:
+    def run(self, progress=None) -> PortfolioResult:
         cfg = self.config
         pf = self.portfolio
 
@@ -212,7 +212,11 @@ class PortfolioEngine:
                 for t, p in positions.items()
             )
 
+        _step = max(1, n // 200)
+
         for i in range(n):
+            if progress and i % _step == 0:
+                progress(i / n)
             date = union[i]
 
             # --- 1. Fill scheduled EXITS at this bar's open ---------------------

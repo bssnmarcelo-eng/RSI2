@@ -118,6 +118,13 @@ class ExitConfig:
     #    the bar gaps below it). Disabled by default.
     use_signal_low_stop: bool = False
 
+    # 7) Cumulative RSI exit: exit when the rolling sum of RSI over the last
+    #    rsi_cum_periods bars exceeds rsi_cum_threshold. Captures mean-reversion
+    #    exhaustion even when individual RSI bars haven't breached the exit level.
+    use_rsi_cum_exit: bool = False
+    rsi_cum_periods: int = 2
+    rsi_cum_threshold: float = 100.0
+
 
 @dataclass
 class CostConfig:
