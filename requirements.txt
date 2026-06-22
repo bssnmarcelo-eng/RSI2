@@ -1,0 +1,8 @@
+streamlit>=1.30
+pandas>=2.0
+numpy>=1.24
+plotly>=5.18
+# Market Screening mode (external data): index constituents + OHLC download
+yfinance>=0.2.40
+lxml>=5.0
+requests>=2.27
