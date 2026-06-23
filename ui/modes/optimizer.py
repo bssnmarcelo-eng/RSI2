@@ -83,7 +83,13 @@ def render_optimizer_results(results: pd.DataFrame, ranges: dict, objective: str
         "train_trades", train_col, "train_profit_factor", "train_win_rate",
         "test_trades", test_col, "test_profit_factor",
     ]
-    show_cols = [c for c in show_cols if c in ranked.columns]
+    # Keep only existing columns, de-duplicated in order: the objective column
+    # (train_col/test_col) may already appear in the static list when the chosen
+    # objective is profit_factor or win_rate, which would create duplicate
+    # (and, after rename, identically-named) columns.
+    seen: set[str] = set()
+    show_cols = [c for c in show_cols
+                 if c in ranked.columns and not (c in seen or seen.add(c))]
     disp = ranked[show_cols].copy()
     rename = {f"train_{objective}": f"IS {obj_label}", f"test_{objective}": f"OOS {obj_label}",
               "train_trades": "IS trades", "test_trades": "OOS trades",
@@ -91,13 +97,22 @@ def render_optimizer_results(results: pd.DataFrame, ranges: dict, objective: str
               "train_win_rate": "IS win rate"}
     for k in param_keys:
         rename[k] = optimizer.PARAM_SPECS[k][0]
+    # Format each column exactly once. The objective columns (train_col/test_col)
+    # may coincide with the profit-factor or win-rate columns when those are the
+    # chosen objective, so track what's been formatted to avoid re-formatting a
+    # value that is already a string.
+    formatted: set[str] = set()
     for col in ["train_profit_factor", "test_profit_factor"]:
         if col in disp:
             disp[col] = disp[col].map(lambda v: "∞" if v == float("inf") else fmt_num(v))
-    if "train_win_rate" in disp:
-        disp["train_win_rate"] = disp["train_win_rate"].map(fmt_pct)
+            formatted.add(col)
+    for col in ["train_win_rate", "test_win_rate"]:
+        if col in disp:
+            disp[col] = disp[col].map(fmt_pct)
+            formatted.add(col)
     for col in [train_col, test_col]:
-        disp[col] = disp[col].map(lambda v: fmt_num(v, 3))
+        if col in disp and col not in formatted:
+            disp[col] = disp[col].map(lambda v: fmt_num(v, 3))
     disp = disp.rename(columns=rename)
     st.dataframe(disp, use_container_width=True, hide_index=True)
 
