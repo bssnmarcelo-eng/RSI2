@@ -215,3 +215,123 @@ def last_quoted_date(symbol: str) -> Optional[str]:
         return _nd().last_quoted_date(symbol, datetimeformat="iso")
     except Exception:
         return None
+
+
+# ── index membership (point-in-time constituents) ──────────────────────────────
+
+def infer_index_name(collection_name: str) -> str:
+    """Best-guess index name from a watchlist/database name.
+
+    Norgate watchlists are usually named '<Index> Current & Past'. The membership
+    API (``index_constituent_timeseries``) wants just the index name, e.g.
+    'S&P 500'. Returns the stripped name; the UI lets the user override it.
+    """
+    name = collection_name or ""
+    for suffix in (" Current & Past", " Current and Past"):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+    return name.strip()
+
+
+def index_membership(
+    symbol: str,
+    indexname: str,
+    start_date: str = "1990-01-01",
+    end_date: Optional[str] = None,
+) -> List[Tuple[str, Optional[str]]]:
+    """Periods during which *symbol* was a constituent of *indexname*.
+
+    Uses Norgate's ``index_constituent_timeseries`` (a 0/1 membership series) and
+    compresses contiguous runs of 1 into ``[start_iso, end_iso]`` intervals. The
+    end is ``None`` when the symbol is still a member at the last available bar
+    ("present"). Returns ``[]`` on any error / no membership.
+    """
+    if not indexname:
+        return []
+    nd = _nd()
+    try:
+        df = nd.index_constituent_timeseries(
+            symbol, indexname,
+            padding_setting=nd.PaddingType.NONE,
+            start_date=start_date,
+            end_date=end_date or "2999-01-01",
+            timeseriesformat="pandas-dataframe",
+        )
+    except Exception:
+        return []
+    if df is None or len(df) == 0:
+        return []
+
+    # The frame has a single 0/1 column (typically "Index Constituent").
+    col = df.columns[0]
+    flags = df[col].astype("float64").fillna(0.0).values > 0.5
+    idx = pd.to_datetime(df.index)
+
+    intervals: List[Tuple[str, Optional[str]]] = []
+    run_start = None
+    for i, member in enumerate(flags):
+        if member and run_start is None:
+            run_start = idx[i]
+        elif not member and run_start is not None:
+            intervals.append((run_start.date().isoformat(), idx[i - 1].date().isoformat()))
+            run_start = None
+    if run_start is not None:  # still a member at the final bar
+        intervals.append((run_start.date().isoformat(), None))
+    return intervals
+
+
+def _mask_from_intervals(
+    periods: List[Tuple[str, Optional[str]]],
+    index: pd.DatetimeIndex,
+) -> pd.Series:
+    """Boolean membership mask aligned to *index* from membership intervals.
+
+    True on every bar that falls within any ``[start, end]`` interval; ``end=None``
+    means "still a member" and extends to the end of *index*. An empty *periods*
+    list yields an all-False mask (symbol never a constituent / no data).
+    """
+    mask = pd.Series(False, index=index)
+    if len(index) == 0 or not periods:
+        return mask
+    last = index.max()
+    for start, end in periods:
+        s = pd.Timestamp(start)
+        e = pd.Timestamp(end) if end is not None else last
+        mask |= (index >= s) & (index <= e)
+    return mask
+
+
+def membership_mask(
+    symbol: str,
+    indexname: str,
+    index: pd.DatetimeIndex,
+    start_date: str = "1990-01-01",
+    end_date: Optional[str] = None,
+) -> pd.Series:
+    """Boolean Series aligned to *index*: was *symbol* in *indexname* on each bar?
+
+    Built from :func:`index_membership` intervals. All-False when the symbol was
+    never a constituent of *indexname* (or membership data is unavailable).
+    """
+    periods = index_membership(symbol, indexname, start_date, end_date)
+    return _mask_from_intervals(periods, index)
+
+
+def membership_label(
+    symbol: str,
+    indexname: str,
+    start_date: str = "1990-01-01",
+    end_date: Optional[str] = None,
+) -> str:
+    """Human-readable membership periods, e.g. '2015-03 → 2019-08 · 2021-01 → atual'.
+
+    Returns '—' when there is no membership data.
+    """
+    periods = index_membership(symbol, indexname, start_date, end_date)
+    if not periods:
+        return "—"
+    parts = []
+    for start, end in periods:
+        end_lbl = "atual" if end is None else end[:7]
+        parts.append(f"{start[:7]} → {end_lbl}")
+    return " · ".join(parts)

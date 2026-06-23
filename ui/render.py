@@ -4,8 +4,19 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from src import charts
+from src import charts, norgate_loader
 from src.utils import fmt_money, fmt_num, fmt_pct
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _membership_label(symbol: str, indexname: str) -> str:
+    """Cached per-(symbol, index) point-in-time membership periods string."""
+    return norgate_loader.membership_label(symbol, indexname)
+
+
+def _index_name_from_state():
+    """The Norgate index chosen for membership history, or None."""
+    return st.session_state.get("_ng_index_name")
 
 
 def render_metrics(metrics: dict) -> None:
@@ -105,7 +116,7 @@ def render_portfolio_metrics(metrics: dict, result) -> None:
     r4[3].metric("Worst trade", fmt_pct(metrics["worst_trade"]))
 
 
-def per_ticker_table(trades: pd.DataFrame) -> pd.DataFrame:
+def per_ticker_table(trades: pd.DataFrame, indexname: str | None = None) -> pd.DataFrame:
     g = trades.groupby("ticker")
     tbl = pd.DataFrame({
         "Trades": g.size(),
@@ -121,7 +132,11 @@ def per_ticker_table(trades: pd.DataFrame) -> pd.DataFrame:
     out["Avg return"] = tbl["Avg return"].map(fmt_pct)
     out["Best"] = tbl["Best"].map(fmt_pct)
     out["Worst"] = tbl["Worst"].map(fmt_pct)
-    return out.reset_index().rename(columns={"ticker": "Ticker"})
+    out = out.reset_index().rename(columns={"ticker": "Ticker"})
+    if indexname:
+        out[f"No índice ({indexname})"] = out["Ticker"].map(
+            lambda t: _membership_label(t, indexname))
+    return out
 
 
 def render_portfolio(result) -> None:
@@ -143,7 +158,8 @@ def render_portfolio(result) -> None:
     if result.trades.empty:
         st.info("No trades were generated with the current parameters.")
     else:
-        st.dataframe(per_ticker_table(result.trades), use_container_width=True, hide_index=True)
+        st.dataframe(per_ticker_table(result.trades, _index_name_from_state()),
+                     use_container_width=True, hide_index=True)
 
     # Drill-down: inspect one asset's price + signals.
     st.subheader("🔍 Inspect an Asset")
@@ -197,7 +213,9 @@ def _max_consecutive(bool_series) -> int:
     return max_run
 
 
-def per_asset_summary_table(trades: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def per_asset_summary_table(
+    trades: pd.DataFrame, indexname: str | None = None
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Rich per-ticker statistics. Returns (display_df, raw_df) sorted by Total PnL desc."""
     import numpy as np
 
@@ -263,6 +281,9 @@ def per_asset_summary_table(trades: pd.DataFrame) -> tuple[pd.DataFrame, pd.Data
     raw = (pd.DataFrame(rows)
            .sort_values("Total PnL", ascending=False)
            .reset_index(drop=True))
+    if indexname:
+        raw[f"No índice ({indexname})"] = raw["Ticker"].map(
+            lambda t: _membership_label(t, indexname))
 
     disp = raw.copy()
     pct_cols = ["Win Rate", "Loss Rate", "Avg Gain", "Avg Loss", "Expectancy",
@@ -326,7 +347,7 @@ def render_trades_overview(trades: pd.DataFrame, n_assets: int) -> None:
         index=0,
         key="per_asset_sort",
     )
-    disp_tbl, raw_tbl = per_asset_summary_table(trades)
+    disp_tbl, raw_tbl = per_asset_summary_table(trades, _index_name_from_state())
     # Re-sort display by the chosen column using the raw numeric values.
     sort_order = raw_tbl.sort_values(sort_col, ascending=False).index
     disp_sorted = disp_tbl.loc[sort_order].reset_index(drop=True)

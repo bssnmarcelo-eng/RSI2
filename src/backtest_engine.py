@@ -109,6 +109,13 @@ def build_signal_frame(data: pd.DataFrame, config: StrategyConfig) -> pd.DataFra
     if config.max_price and config.max_price > 0:
         signal &= df["close"] <= config.max_price
 
+    # Point-in-time index membership: when a boolean ``_member`` column is attached
+    # (Norgate source with constituent gating on), only allow entries on bars where
+    # the asset was actually a constituent of the selected index. Indicators above
+    # are still computed over the full history, so they stay causal/correct.
+    if "_member" in data.columns:
+        signal &= data["_member"].reindex(df.index).fillna(False)
+
     df["entry_signal"] = signal.fillna(False)
     return df
 

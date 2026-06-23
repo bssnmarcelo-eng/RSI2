@@ -57,7 +57,8 @@ def run_portfolio_mode(note: str = "", data_src: dict | None = None):
                        f"{total_bars:,} candle-rows.")
         elif is_pending:
             _pf_sig = (f"ng|{pending['symbols']}|{pending['start']}|{pending['end']}"
-                       f"|{pending['adjustment']}|{pending.get('frequency')}")
+                       f"|{pending['adjustment']}|{pending.get('frequency')}"
+                       f"|{pending.get('index_name')}|{pending.get('restrict')}")
             st.caption(
                 f"**{len(pending['symbols'])}** ativos selecionados via Norgate · "
                 f"capital **{fmt_money(pconf.initial_capital, 0)}** · "

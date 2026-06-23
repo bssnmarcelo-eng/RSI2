@@ -38,6 +38,10 @@ def build_data_source_params() -> dict:
                 "ou o pacote norgatedata não está instalado.\n\n"
                 "`pip install norgatedata`"
             )
+    else:
+        # Membership/constituent gating is Norgate-only; drop stale selections.
+        st.session_state["_ng_index_name"] = None
+        st.session_state["_ng_restrict"] = False
     return {"source": source, "adjustment": adj, "frequency": freq}
 
 
@@ -76,6 +80,29 @@ def _ng_collection_ui(key_prefix: str) -> tuple[str, str]:
             (i for i, n in enumerate(names) if "US Equities" in n), 0
         )
         name = st.selectbox("Database", names, index=default_idx, key=f"{key_prefix}_db")
+
+    # Point-in-time index membership: when on, the backtest only opens trades while
+    # each asset was actually a constituent of the chosen index, and the result
+    # tables gain a column with the membership periods.
+    restrict = st.checkbox(
+        "Restringir trades aos constituintes históricos do índice (point-in-time)",
+        value=False, key=f"{key_prefix}_restrict",
+        help="Só permite entradas enquanto o ativo fazia parte do índice selecionado, "
+             "evitando viés de antecipação (ex.: operar AMZN no Dow Jones antes de 2024-02). "
+             "Faz 1 consulta Norgate por ativo — pode demorar em universos grandes.")
+    if restrict:
+        index_name = st.text_input(
+            "Índice para constituição",
+            value=norgate_loader.infer_index_name(name),
+            key=f"{key_prefix}_indexname",
+            help="Nome do índice no Norgate (ex.: 'S&P 500', 'S&P 100', 'Nasdaq 100', "
+                 "'Russell 1000', 'Dow Jones Industrial Average'). "
+                 "Pré-preenchido a partir da coleção selecionada.")
+        st.session_state["_ng_index_name"] = index_name.strip() or None
+        st.session_state["_ng_restrict"] = bool(index_name.strip())
+    else:
+        st.session_state["_ng_index_name"] = None
+        st.session_state["_ng_restrict"] = False
     return ctype, name
 
 
@@ -143,6 +170,23 @@ def collect_norgate_single(cfg: StrategyConfig, data_src: dict):
         st.error(f"Sem dados para {ticker} no período selecionado.")
         return None, None
 
+    # Point-in-time gating: keep only the bars where the asset was a constituent.
+    indexname = st.session_state.get("_ng_index_name")
+    if st.session_state.get("_ng_restrict") and indexname:
+        mask = _cached_membership_mask(ticker, indexname, df.index, start_str, end_str)
+        if not bool(mask.any()):
+            st.error(
+                f"**{ticker}** nunca fez parte de **{indexname}** no período "
+                f"selecionado — nenhum trade seria gerado com a restrição ligada."
+            )
+            return None, None
+        df = df.copy()
+        df["_member"] = mask.values
+        st.caption(
+            f"🔒 Constituição **{indexname}**: "
+            f"{norgate_loader.membership_label(ticker, indexname, start_str, end_str)}"
+        )
+
     st.caption(
         f"**{ticker}** · {len(df)} barras "
         f"({df.index.min().date()} → {df.index.max().date()}) · "
@@ -176,13 +220,20 @@ def collect_norgate_multi(cfg: StrategyConfig, data_src: dict, select_label: str
         f"**{len(all_symbols)}** ativos em '{cname}' — inclui deslistados "
         f"e constituintes históricos."
     )
-    default_sel = all_symbols[:50] if len(all_symbols) > 50 else all_symbols
-    selected = st.multiselect(
-        select_label,
-        all_symbols,
-        default=default_sel,
-        key="ng_multi_sel",
-    )
+    select_all = st.checkbox(
+        f"Selecionar todos os {len(all_symbols)} ativos",
+        value=False, key="ng_multi_all")
+    if select_all:
+        selected = all_symbols
+        st.caption(f"✅ Todos os **{len(all_symbols)}** ativos selecionados.")
+    else:
+        default_sel = all_symbols[:50] if len(all_symbols) > 50 else all_symbols
+        selected = st.multiselect(
+            select_label,
+            all_symbols,
+            default=default_sel,
+            key="ng_multi_sel",
+        )
     if not selected:
         st.warning("Selecione ao menos um ativo.")
         return None
@@ -198,7 +249,9 @@ def collect_norgate_multi(cfg: StrategyConfig, data_src: dict, select_label: str
 
     return {"_pending": True, "symbols": selected, "start": start_str,
             "end": end_str, "adjustment": data_src["adjustment"],
-            "frequency": data_src.get("frequency", "Semanal")}
+            "frequency": data_src.get("frequency", "Semanal"),
+            "index_name": st.session_state.get("_ng_index_name"),
+            "restrict": bool(st.session_state.get("_ng_restrict"))}
 
 
 def load_combined(uploaded):
@@ -265,8 +318,13 @@ def collect_multi_asset_data(
     if not tickers:
         st.error("Could not identify any tickers. Provide a ticker/symbol column or name files per asset.")
         return None
-    default_sel = tickers if len(tickers) <= 20 else tickers[:20]
-    selected = st.multiselect(select_label, tickers, default=default_sel)
+    select_all = st.checkbox(f"Select all {len(tickers)} tickers", value=False, key="csv_multi_all")
+    if select_all:
+        selected = tickers
+        st.caption(f"✅ All **{len(tickers)}** tickers selected.")
+    else:
+        default_sel = tickers if len(tickers) <= 20 else tickers[:20]
+        selected = st.multiselect(select_label, tickers, default=default_sel)
     if len(selected) < 1:
         st.warning("Select at least one ticker.")
         return None
@@ -325,7 +383,63 @@ def _resolve_norgate_pending(pending: dict, cfg: StrategyConfig) -> dict | None:
     if not data:
         st.error("Nenhum ativo com dados válidos no período selecionado.")
         return None
+
+    # Point-in-time gating: attach a membership mask per ticker and drop assets
+    # that were never constituents of the chosen index in the period.
+    indexname = pending.get("index_name")
+    if pending.get("restrict") and indexname:
+        data, never = _apply_membership(
+            data, indexname, pending["start"], pending["end"])
+        if never:
+            st.warning(
+                f"Sem constituição em **{indexname}** no período (0 trades): "
+                f"{', '.join(never[:20])}"
+                + (f" … e mais {len(never) - 20}" if len(never) > 20 else "")
+            )
+        if not data:
+            st.error(
+                f"Nenhum ativo selecionado fez parte de '{indexname}' no período. "
+                "Verifique o nome do índice ou desligue a restrição."
+            )
+            return None
     return data
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_membership(symbol: str, indexname: str, start_date: str, end_date: str):
+    """Cached point-in-time membership intervals for (symbol, index, period)."""
+    return norgate_loader.index_membership(symbol, indexname, start_date, end_date)
+
+
+def _cached_membership_mask(symbol, indexname, index, start_date, end_date):
+    """Boolean membership mask aligned to *index*, built from cached intervals."""
+    periods = _cached_membership(symbol, indexname, start_date, end_date)
+    return norgate_loader._mask_from_intervals(periods, index)
+
+
+def _apply_membership(data_by_ticker: dict, indexname: str, start_date: str, end_date: str):
+    """Attach a ``_member`` mask per ticker; drop never-constituents.
+
+    Returns ``(kept_data, never_members)`` where *kept_data* is a new dict of
+    ticker → df (with a ``_member`` column) for assets that were constituents at
+    some point, and *never_members* lists the tickers excluded entirely.
+    """
+    kept: dict = {}
+    never: list[str] = []
+    bar = st.progress(0.0, text="Verificando constituição no índice…")
+    items = list(data_by_ticker.items())
+    n = len(items)
+    for i, (ticker, df) in enumerate(items):
+        mask = _cached_membership_mask(ticker, indexname, df.index, start_date, end_date)
+        if bool(mask.any()):
+            d = df.copy()
+            d["_member"] = mask.values
+            kept[ticker] = d
+        else:
+            never.append(ticker)
+        bar.progress((i + 1) / n, text="Verificando constituição no índice…")
+    bar.empty()
+    return kept, never
 
 
 @st.cache_data(ttl=3600, show_spinner=False)

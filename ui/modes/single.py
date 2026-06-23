@@ -78,7 +78,10 @@ def run_single_mode(note: str = "", data_src: dict | None = None):
     # them, so stale metrics/charts never render against a different selection.
     _sig = None
     if data is not None:
-        _sig = f"{cfg.ticker}|{data.index.min()}|{data.index.max()}|{len(data)}"
+        _restrict = st.session_state.get("_ng_restrict")
+        _index = st.session_state.get("_ng_index_name")
+        _sig = (f"{cfg.ticker}|{data.index.min()}|{data.index.max()}|{len(data)}"
+                f"|{_restrict}|{_index}")
         if ("_single_result" in st.session_state
                 and st.session_state.get("_single_sig") != _sig):
             for _k in ("_single_result", "_single_metrics", "_single_meta", "_single_sig"):

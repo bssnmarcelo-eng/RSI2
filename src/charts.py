@@ -46,9 +46,14 @@ def price_chart(
     vol_row  = 2 if has_vol else None
     rsi_row  = (2 + int(has_vol)) if has_rsi else None
 
+    # shared_xaxes=False on purpose: we link the panes ourselves with
+    # ``matches="x"`` so the TOP (price) axis is the master. That lets the native
+    # range selector live on the top axis AND actually drive the shared range —
+    # with make_subplots' default shared axes the master is the *bottom* one, and
+    # a selector on a slaved top axis would be ignored.
     fig = make_subplots(
         rows=n_rows, cols=1,
-        shared_xaxes=True,
+        shared_xaxes=False,
         vertical_spacing=0.03,
         row_heights=row_heights,
     )
@@ -156,44 +161,43 @@ def price_chart(
             row=rsi_row, col=1,
         )
 
-    # ── range buttons ─────────────────────────────────────────────────────
-    # Plotly's built-in rangeselector updates only the X axis when clicked;
-    # the Y axis stays fixed at the full-dataset range.  We replace it with
-    # updatemenus buttons that set BOTH xaxis.range and yaxis.range.
-    #
-    # With make_subplots(shared_xaxes=True), Plotly creates xaxis, xaxis2,
-    # xaxis3 … for each row. Setting only "xaxis.range" may not propagate
-    # to the visible bottom axis (xaxis{n_rows}).  We therefore set all
-    # possible x-axis keys so the update is guaranteed to take effect.
+    # ── range buttons (custom: set BOTH X and a fitted Y) ──────────────────
+    # Native rangeselector only rescales X and anchors to the padded axis end
+    # (leaving empty space past the last bar) and never fits Y — both looked
+    # broken. These updatemenus buttons set X to [start .. last *data* bar] and a
+    # Y range fitted to that window, so every period is framed tightly.
     last_dt  = data.index.max()
     first_dt = data.index.min()
 
-    def _range_btn(label: str, start) -> dict:
+    def _fit_y(window: pd.DataFrame) -> list:
+        lo = max(float(window["low"].min()) * 0.97, 1e-9)
+        hi = float(window["high"].max()) * 1.03
+        return [float(np.log10(lo)), float(np.log10(hi))]
+
+    full_y = _fit_y(data)
+    full_x = [first_dt.strftime("%Y-%m-%d"), last_dt.strftime("%Y-%m-%d")]
+
+    def _btn(label: str, start) -> dict:
         start_ts = pd.Timestamp(start)
         if start_ts < first_dt:
             start_ts = first_dt
-        sub = data[data.index >= start_ts] if (data.index >= start_ts).any() else data
-        lo = max(float(sub["low"].min())  * 0.97, 1e-9)
-        hi = float(sub["high"].max()) * 1.03
-        s = start_ts.strftime("%Y-%m-%d")
-        e = last_dt.strftime("%Y-%m-%d")
-        args: dict = {
-            "yaxis.range":    [np.log10(lo), np.log10(hi)],
+        window = data[data.index >= start_ts]
+        if window.empty:
+            window = data
+        return dict(label=label, method="relayout", args=[{
+            "xaxis.range":     [start_ts.strftime("%Y-%m-%d"), last_dt.strftime("%Y-%m-%d")],
+            "xaxis.autorange": False,
+            "yaxis.range":     _fit_y(window),
             "yaxis.autorange": False,
-        }
-        # Set every possible shared x-axis key (extra keys are silently ignored).
-        for ax in ("xaxis", "xaxis2", "xaxis3"):
-            args[f"{ax}.range"]    = [s, e]
-            args[f"{ax}.autorange"] = False
-        return dict(label=label, method="relayout", args=[args])
+        }])
 
     range_buttons = [
-        _range_btn("3M",  last_dt - pd.DateOffset(months=3)),
-        _range_btn("6M",  last_dt - pd.DateOffset(months=6)),
-        _range_btn("1A",  last_dt - pd.DateOffset(years=1)),
-        _range_btn("3A",  last_dt - pd.DateOffset(years=3)),
-        _range_btn("5A",  last_dt - pd.DateOffset(years=5)),
-        _range_btn("Tudo", first_dt),
+        _btn("3M",  last_dt - pd.DateOffset(months=3)),
+        _btn("6M",  last_dt - pd.DateOffset(months=6)),
+        _btn("1A",  last_dt - pd.DateOffset(years=1)),
+        _btn("3A",  last_dt - pd.DateOffset(years=3)),
+        _btn("5A",  last_dt - pd.DateOffset(years=5)),
+        _btn("Tudo", first_dt),
     ]
 
     # ── global layout ─────────────────────────────────────────────────────
@@ -202,32 +206,28 @@ def price_chart(
         height=total_height,
         margin=dict(l=50, r=20, t=70, b=30),
         legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="right", x=1),
-        # Log scale on price pane keeps multi-decade ranges legible.
-        yaxis=dict(
-            type="log",
-            autorange=True,
-            fixedrange=False,
-            title_text="Preço",
-        ),
+        # Log price pane, opened on the full fitted range (no autorange padding).
+        yaxis=dict(type="log", autorange=False, fixedrange=False,
+                   title_text="Preço", range=full_y),
         updatemenus=[dict(
-            type="buttons",
-            direction="left",
-            buttons=range_buttons,
-            x=0.0,   xanchor="left",
-            y=1.0,   yanchor="bottom",
-            bgcolor="#262730",
-            bordercolor="#444",
-            font=dict(size=12, color="#ffffff"),
-            # active=5 → "Tudo" highlighted on load (no args applied).
-            # Avoids the first-button quirk where active=-1 in Plotly.js
-            # can be treated as index 0 ("3M") and apply its args before
-            # the full-data autorange has settled.
-            active=5,
-            pad=dict(r=6, t=2, b=2),
+            type="buttons", direction="left", buttons=range_buttons,
+            x=0.0, xanchor="left", y=1.02, yanchor="bottom",
+            font=dict(size=12), pad=dict(r=6, t=2, b=2),
+            # active=None: Plotly does NOT auto-apply any button on load, so the
+            # chart opens on the explicit full range set below (no "opens zoomed
+            # to 5A"), and no button shows a misleading highlight. Clicking a
+            # button still applies its X+Y window.
+            active=None,
         )],
     )
-    # Disable rangeslider on ALL x-axes produced by make_subplots.
     fig.update_xaxes(rangeslider_visible=False, type="date")
+    # Top price axis is the master; lower panes follow it; date ticks on bottom.
+    for r in range(2, n_rows + 1):
+        fig.update_xaxes(matches="x", row=r, col=1)
+    for r in range(1, n_rows):
+        fig.update_xaxes(showticklabels=False, row=r, col=1)
+    # Explicit initial window = full history (so it opens framed, not padded).
+    fig.update_xaxes(range=full_x, autorange=False, row=1, col=1)
     return fig
 
 
