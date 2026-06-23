@@ -12,6 +12,7 @@ st.set_page_config(page_title="RSI(2) + Candlestick Backtester", page_icon="📈
 
 from ui.data_source import build_data_source_params  # noqa: E402
 from ui.modes import (  # noqa: E402
+    run_fundamentals_mode,
     run_log_mode,
     run_optimizer_mode,
     run_per_asset_mode,
@@ -32,13 +33,15 @@ def main() -> None:
     mode = st.sidebar.radio(
         "Backtest mode",
         ["Portfolio (shared capital)", "Per-asset (independent)", "Single asset",
-         "Optimizer (per-asset grid)", "🔎 Market Screening", "📁 Backtest Log"],
+         "Optimizer (per-asset grid)", "🔎 Market Screening", "💼 Análise Fundamentalista",
+         "📁 Backtest Log"],
         index=0,
         help="Portfolio = one shared capital pool with aggregated results. "
              "Per-asset = every asset tested independently with the full capital. "
              "Single = one ticker. Optimizer = grid-search parameters on the per-asset "
              "pooled trades with an in/out-of-sample split. Market Screening = scan an "
-             "index for tickers firing the signal now. Backtest Log = saved-run history.")
+             "index for tickers firing the signal now. Análise Fundamentalista = "
+             "fundamentos atuais de um ativo (Norgate). Backtest Log = saved-run history.")
 
     if mode.startswith("📁"):
         run_log_mode()
@@ -48,6 +51,12 @@ def main() -> None:
 
     if mode.startswith("🔎"):
         run_screening_mode()
+        st.markdown("---")
+        st.caption(DISCLAIMER)
+        return
+
+    if mode.startswith("💼"):
+        run_fundamentals_mode()
         st.markdown("---")
         st.caption(DISCLAIMER)
         return
