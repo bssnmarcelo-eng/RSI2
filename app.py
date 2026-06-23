@@ -18,7 +18,6 @@ from ui.modes import (  # noqa: E402
     run_per_asset_mode,
     run_portfolio_mode,
     run_screening_mode,
-    run_single_mode,
 )
 from ui.text import DISCLAIMER, STRATEGY_DESCRIPTION  # noqa: E402
 
@@ -32,14 +31,14 @@ def main() -> None:
     st.sidebar.header("🧭 Mode")
     mode = st.sidebar.radio(
         "Backtest mode",
-        ["Portfolio (shared capital)", "Per-asset (independent)", "Single asset",
+        ["Portfolio (shared capital)", "Per-asset (independent)",
          "Optimizer (per-asset grid)", "🔎 Market Screening", "💼 Análise Fundamentalista",
          "📁 Backtest Log"],
         index=0,
         help="Portfolio = one shared capital pool with aggregated results. "
-             "Per-asset = every asset tested independently with the full capital. "
-             "Single = one ticker. Optimizer = grid-search parameters on the per-asset "
-             "pooled trades with an in/out-of-sample split. Market Screening = scan an "
+             "Per-asset = every asset tested independently with the full capital "
+             "(use it with a single ticker too). Optimizer = grid-search parameters on the "
+             "per-asset pooled trades with an in/out-of-sample split. Market Screening = scan an "
              "index for tickers firing the signal now. Análise Fundamentalista = "
              "fundamentos atuais de um ativo (Norgate). Backtest Log = saved-run history.")
 
@@ -68,14 +67,12 @@ def main() -> None:
         help="Saved with the run in the backtest log to help you find it later "
              "(e.g. 'IBKR 2x leverage test').")
 
-    if mode.startswith("Portfolio"):
-        run_portfolio_mode(note, data_src)
-    elif mode.startswith("Per-asset"):
+    if mode.startswith("Per-asset"):
         run_per_asset_mode(note, data_src)
     elif mode.startswith("Optimizer"):
         run_optimizer_mode(note, data_src)
     else:
-        run_single_mode(note, data_src)
+        run_portfolio_mode(note, data_src)
 
     st.markdown("---")
     st.caption(DISCLAIMER)

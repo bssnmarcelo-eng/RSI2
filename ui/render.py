@@ -19,51 +19,6 @@ def _index_name_from_state():
     return st.session_state.get("_ng_index_name")
 
 
-def render_metrics(metrics: dict) -> None:
-    st.subheader("📊 Performance Summary")
-    r1 = st.columns(4)
-    r1[0].metric("Final equity", fmt_money(metrics["final_equity"]))
-    r1[1].metric("Total return", fmt_pct(metrics["total_return"]))
-    r1[2].metric("CAGR", fmt_pct(metrics["cagr"]))
-    r1[3].metric("Max drawdown", fmt_pct(metrics["max_drawdown"]))
-    r2 = st.columns(4)
-    r2[0].metric("Trades", f"{metrics['num_trades']}")
-    r2[1].metric("Win rate", fmt_pct(metrics["win_rate"]))
-    pf = metrics["profit_factor"]
-    r2[2].metric("Profit factor", "∞" if pf == float("inf") else fmt_num(pf))
-    r2[3].metric("Expectancy / trade", fmt_money(metrics["expectancy"]))
-    r3 = st.columns(4)
-    r3[0].metric("Sharpe", fmt_num(metrics["sharpe"]))
-    r3[1].metric("Sortino", fmt_num(metrics["sortino"]))
-    r3[2].metric("Avg gain", fmt_pct(metrics["avg_gain"]))
-    r3[3].metric("Avg loss", fmt_pct(metrics["avg_loss"]))
-    r4 = st.columns(4)
-    r4[0].metric("Best trade", fmt_pct(metrics["best_trade"]))
-    r4[1].metric("Worst trade", fmt_pct(metrics["worst_trade"]))
-    r4[2].metric("Avg holding (bars)", fmt_num(metrics["avg_holding"], 1))
-    r4[3].metric("Exposure", fmt_pct(metrics["exposure"]))
-
-
-def render_charts(result) -> None:
-    cfg = result.config
-    st.subheader("📈 Charts")
-    st.plotly_chart(
-        charts.price_chart(
-            result.data, result.trades, cfg.ticker,
-            rsi_entry=cfg.rsi_entry_threshold,
-            rsi_exit=cfg.exits.rsi_exit_threshold,
-        ),
-        use_container_width=True,
-    )
-    c1, c2 = st.columns(2)
-    c1.plotly_chart(charts.equity_chart(result.equity_curve, cfg.initial_capital), use_container_width=True)
-    c2.plotly_chart(charts.drawdown_chart(result.equity_curve), use_container_width=True)
-    c3, c4 = st.columns(2)
-    c3.plotly_chart(charts.returns_histogram(result.trades), use_container_width=True)
-    c4.plotly_chart(charts.yearly_bar(result.equity_curve), use_container_width=True)
-    st.plotly_chart(charts.monthly_heatmap(result.equity_curve), use_container_width=True)
-
-
 def render_trade_log(trades: pd.DataFrame, equity: pd.Series, key: str) -> None:
     st.subheader("📒 Trade Log")
     if trades.empty:
