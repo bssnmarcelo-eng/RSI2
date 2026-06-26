@@ -230,3 +230,4 @@ class Trade:
     net_return: float
     pnl: float
     equity_after: float
+    mfe: float          # Maximum Favorable Excursion: (max_high - entry) / entry

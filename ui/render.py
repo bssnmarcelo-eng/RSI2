@@ -36,6 +36,9 @@ def render_trade_log(trades: pd.DataFrame, equity: pd.Series, key: str) -> None:
         display["signal_atr_mult"] = trades["signal_atr_mult"].map(lambda v: fmt_num(v, 2))
     display["gross_return"] = trades["gross_return"].map(fmt_pct)
     display["net_return"] = trades["net_return"].map(fmt_pct)
+    for mfe_col in ["mfe", "mfe_1w", "mfe_2w", "mfe_3w", "mfe_4w", "mfe_5w"]:
+        if mfe_col in display:
+            display[mfe_col] = trades[mfe_col].map(lambda v: fmt_pct(v) if pd.notna(v) else "—")
     st.dataframe(display, use_container_width=True, hide_index=True)
     cols = st.columns(2)
     cols[0].download_button("⬇️ Download trade log (CSV)", data=trades.to_csv(index=False).encode("utf-8"),
@@ -350,7 +353,8 @@ def render_trades_overview(trades: pd.DataFrame, n_assets: int) -> None:
     cols_order = ["ticker", "signal_date", "rsi_at_signal", "signal_range",
                   "signal_body_percentile", "signal_atr_mult", "pattern", "entry_date",
                   "entry_price", "exit_date", "exit_price", "exit_reason", "bars_held",
-                  "gross_return", "net_return", "pnl"]
+                  "gross_return", "net_return", "pnl",
+                  "mfe", "mfe_1w", "mfe_2w", "mfe_3w", "mfe_4w", "mfe_5w"]
     cols_order = [c for c in cols_order if c in trades.columns]
     raw = trades[cols_order].sort_values("entry_date").reset_index(drop=True)
     disp = raw.copy()
@@ -365,6 +369,9 @@ def render_trades_overview(trades: pd.DataFrame, n_assets: int) -> None:
         disp["signal_atr_mult"] = raw["signal_atr_mult"].map(lambda v: fmt_num(v, 2))
     disp["gross_return"] = raw["gross_return"].map(fmt_pct)
     disp["net_return"] = raw["net_return"].map(fmt_pct)
+    for mfe_col in ["mfe", "mfe_1w", "mfe_2w", "mfe_3w", "mfe_4w", "mfe_5w"]:
+        if mfe_col in disp:
+            disp[mfe_col] = raw[mfe_col].map(lambda v: fmt_pct(v) if pd.notna(v) else "—")
     st.dataframe(disp, use_container_width=True, hide_index=True)
 
     st.download_button("⬇️ Download all operations (CSV)",

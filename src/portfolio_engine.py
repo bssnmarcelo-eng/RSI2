@@ -30,7 +30,7 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from .backtest_engine import build_signal_frame
+from .backtest_engine import add_period_mfe, build_signal_frame
 from .types import Execution, PortfolioConfig, PortfolioSizing, StrategyConfig, Trade
 from .utils import commission_for
 
@@ -54,6 +54,7 @@ class _Position:
     rsi_at_signal: float
     pattern: str
     entered_at_close: bool
+    max_high_seen: float = 0.0  # running peak high for MFE calculation
 
 
 @dataclass
@@ -135,6 +136,9 @@ class PortfolioEngine:
         gross_return = (exec_price / pos.entry_price) - 1.0 if pos.entry_price else 0.0
         net_return = net_pnl / cost_basis if cost_basis else 0.0
 
+        mfe_raw = pos.max_high_seen - pos.entry_price
+        mfe = mfe_raw / pos.entry_price if pos.entry_price else 0.0
+
         trade = Trade(
             ticker=pos.ticker,
             signal_date=pos.signal_date,
@@ -154,6 +158,7 @@ class PortfolioEngine:
             net_return=net_return,
             pnl=net_pnl,
             equity_after=float("nan"),  # filled in after each bar is marked
+            mfe=mfe,
         )
         return cash, trade
 
@@ -331,6 +336,12 @@ class PortfolioEngine:
                 if not np.isnan(mk):
                     long_now += p.shares * mk
                     marks_prev[t] = mk  # roll forward last known close
+                # Track peak high for MFE (skip entry bar for SIGNAL_CLOSE entries).
+                if arr[t]["has_bar"][i]:
+                    if not (p.entered_at_close and p.entry_index == i):
+                        high_i = arr[t]["high"][i]
+                        if not np.isnan(high_i):
+                            p.max_high_seen = max(p.max_high_seen, float(high_i))
             equity[i] = cash + long_now
             n_open[i] = len(positions)
             gross_exposure[i] = (long_now / equity[i]) if equity[i] else 0.0
@@ -362,6 +373,7 @@ class PortfolioEngine:
         positions_series = pd.Series(n_open, index=union, name="open_positions")
         exposure_series = pd.Series(gross_exposure, index=union, name="gross_exposure")
         trades_df = _trades_to_frame(trades)
+        trades_df = add_period_mfe(trades_df, self.data_by_ticker)
 
         # Under unlimited margin a leveraged basket can wipe out the account.
         if n and float(np.nanmin(equity)) <= 0.0:
@@ -459,6 +471,7 @@ class PortfolioEngine:
                 rsi_at_signal=meta["rsi_at_signal"],
                 pattern=meta["pattern"],
                 entered_at_close=(price_key == "close"),
+                max_high_seen=price,
             )
         return cash
 
@@ -468,7 +481,7 @@ def _trades_to_frame(trades: List[Trade]) -> pd.DataFrame:
         "ticker", "signal_date", "signal_close", "rsi_at_signal", "signal_range",
         "signal_body_percentile", "signal_atr_mult", "pattern",
         "entry_date", "entry_price", "exit_date", "exit_price", "exit_reason",
-        "bars_held", "gross_return", "net_return", "pnl", "equity_after",
+        "bars_held", "gross_return", "net_return", "pnl", "equity_after", "mfe",
     ]
     if not trades:
         return pd.DataFrame(columns=columns)

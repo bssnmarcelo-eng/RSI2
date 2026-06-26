@@ -54,6 +54,7 @@ class _OpenPosition:
     rsi_at_signal: float
     pattern: str
     entered_at_close: bool      # True if filled on its own signal bar's close
+    max_high_seen: float = 0.0  # running peak high for MFE calculation
 
 
 @dataclass
@@ -247,6 +248,9 @@ class BacktestEngine:
         gross_return = (exec_price / pos.entry_price) - 1.0 if pos.entry_price else 0.0
         net_return = net_pnl / cost_basis if cost_basis else 0.0
 
+        mfe_raw = pos.max_high_seen - pos.entry_price
+        mfe = mfe_raw / pos.entry_price if pos.entry_price else 0.0
+
         trade = Trade(
             ticker=self.config.ticker,
             signal_date=pos.signal_date,
@@ -266,6 +270,7 @@ class BacktestEngine:
             net_return=net_return,
             pnl=net_pnl,
             equity_after=new_cash,  # flat after exit, so equity == cash
+            mfe=mfe,
         )
         return new_cash, trade
 
@@ -349,6 +354,7 @@ class BacktestEngine:
                             rsi_at_signal=pending_entry["rsi_at_signal"],
                             pattern=pending_entry["pattern"],
                             entered_at_close=False,
+                            max_high_seen=exec_price,
                         )
                 pending_entry = None  # one-bar order: filled or cancelled
 
@@ -423,9 +429,15 @@ class BacktestEngine:
                             rsi_at_signal=signal_meta["rsi_at_signal"],
                             pattern=signal_meta["pattern"],
                             entered_at_close=True,
+                            max_high_seen=exec_price,
                         )
                 else:  # NEXT_OPEN (default, realistic)
                     pending_entry = signal_meta
+
+            # --- 3b. Track peak high for MFE (skip entry bar for SIGNAL_CLOSE entries) --
+            if position is not None:
+                if not (position.entered_at_close and position.entry_index == i):
+                    position.max_high_seen = max(position.max_high_seen, float(highs[i]))
 
             # --- 4. Mark-to-market equity at this bar's close ------------------
             position_value = position.shares * close_i if position is not None else 0.0
@@ -446,6 +458,7 @@ class BacktestEngine:
 
         equity_series = pd.Series(equity, index=df.index, name="equity")
         trades_df = self._trades_to_frame(trades)
+        trades_df = add_period_mfe(trades_df, df)
         return BacktestResult(
             trades=trades_df,
             equity_curve=equity_series,
@@ -461,8 +474,62 @@ class BacktestEngine:
             "ticker", "signal_date", "signal_close", "rsi_at_signal", "signal_range",
             "signal_body_percentile", "signal_atr_mult", "pattern", "entry_date", "entry_price",
             "exit_date", "exit_price", "exit_reason", "bars_held", "gross_return", "net_return",
-            "pnl", "equity_after",
+            "pnl", "equity_after", "mfe",
         ]
         if not trades:
             return pd.DataFrame(columns=columns)
         return pd.DataFrame([t.__dict__ for t in trades])[columns]
+
+
+def add_period_mfe(
+    trades_df: pd.DataFrame,
+    data,
+) -> pd.DataFrame:
+    """Add mfe_1w … mfe_5w columns to *trades_df*.
+
+    Each column is the maximum unrealised gain (vs entry_price) achievable in
+    the first N calendar weeks after entry, independent of actual exit date.
+    *data* is either a single OHLCV DataFrame (single-asset) or a
+    ``{ticker: DataFrame}`` dict (multi-asset / portfolio).
+
+    A "week" is 7 calendar days; for weekly-bar data that equals ~1 bar.
+    """
+    result = trades_df.copy()
+    period_cols = [f"mfe_{n}w" for n in range(1, 6)]
+
+    if result.empty:
+        for col in period_cols:
+            result[col] = float("nan")
+        return result
+
+    data_is_dict = isinstance(data, dict)
+
+    def _high_series(ticker: str) -> pd.Series:
+        if data_is_dict:
+            df = data.get(ticker)
+            return df["high"].sort_index() if df is not None and "high" in df.columns else pd.Series(dtype=float)
+        return data["high"].sort_index() if "high" in data.columns else pd.Series(dtype=float)
+
+    for n_weeks in range(1, 6):
+        col = f"mfe_{n_weeks}w"
+        offset = pd.DateOffset(weeks=n_weeks)
+        values: list = []
+        for _, row in result.iterrows():
+            ticker = str(row.get("ticker", "")) if data_is_dict else ""
+            highs = _high_series(ticker)
+            if highs.empty:
+                values.append(float("nan"))
+                continue
+            ep = float(row["entry_price"])
+            if ep <= 0:
+                values.append(float("nan"))
+                continue
+            entry_ts = pd.Timestamp(row["entry_date"])
+            cutoff = entry_ts + offset
+            window = highs.loc[entry_ts:cutoff]
+            if window.empty:
+                values.append(float("nan"))
+            else:
+                values.append((float(window.max()) - ep) / ep)
+        result[col] = values
+    return result
