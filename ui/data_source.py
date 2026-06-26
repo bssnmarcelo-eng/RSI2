@@ -110,16 +110,19 @@ def _ng_date_range_ui(key_prefix: str):
     """Date range widgets for Norgate mode; returns (start_date_str, end_date_str)."""
     import datetime
     c1, c2 = st.columns(2)
+    today = datetime.date.today()
     start = c1.date_input(
         "Data inicial",
         value=datetime.date(1990, 1, 1),
         min_value=datetime.date(1990, 1, 1),
+        max_value=today,
         key=f"{key_prefix}_start",
     )
     end = c2.date_input(
         "Data final",
-        value=datetime.date.today(),
+        value=today,
         min_value=datetime.date(1990, 1, 1),
+        max_value=today,
         key=f"{key_prefix}_end",
     )
     if start > end:
