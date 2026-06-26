@@ -5,7 +5,6 @@ __pycache__/
 venv/
 env/
 .env
-logs/
 .DS_Store
 Thumbs.db
 *.log

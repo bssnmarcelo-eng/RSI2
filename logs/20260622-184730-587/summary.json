@@ -1,0 +1,81 @@
+{
+  "run_id": "20260622-184730-587",
+  "timestamp": "2026-06-22T18:47:30",
+  "mode": "Per-asset",
+  "meta": {
+    "tickers": [
+      "AAPL"
+    ],
+    "n_assets": 1,
+    "start": "1990-01-02",
+    "end": "2026-06-22"
+  },
+  "config": {
+    "rsi_period": 2,
+    "rsi_entry_threshold": 10.0,
+    "min_price": 0.0,
+    "max_price": 0.0,
+    "patterns": {
+      "use_hammer": true,
+      "hammer": {
+        "percentile": 0.33,
+        "require_bullish_close": false,
+        "use_atr_filter": true,
+        "atr_period": 14,
+        "atr_multiple": 1.0
+      }
+    },
+    "entry_execution": "next_open",
+    "exit_execution": "next_open",
+    "exits": {
+      "use_rsi_exit": true,
+      "rsi_exit_threshold": 90.0,
+      "use_max_bars": false,
+      "max_bars": 5,
+      "use_profit_target": false,
+      "profit_target_pct": 5.0,
+      "use_stop_loss": false,
+      "stop_loss_pct": 3.0,
+      "use_sma_exit": false,
+      "sma_period": 5,
+      "use_signal_low_stop": false,
+      "use_rsi_cum_exit": false,
+      "rsi_cum_periods": 2,
+      "rsi_cum_threshold": 185.0
+    },
+    "costs": {
+      "model": "ibkr_fixed",
+      "commission_fixed": 0.0,
+      "commission_pct": 0.0,
+      "ibkr_per_share": 0.005,
+      "ibkr_min_per_order": 1.0,
+      "ibkr_max_pct": 0.01,
+      "slippage_bps": 0.0
+    },
+    "sizing": {
+      "method": "full",
+      "fixed_capital": 10000.0,
+      "percent": 100.0,
+      "allow_fractional": true
+    },
+    "initial_capital": 100000.0,
+    "ticker": ""
+  },
+  "metrics": {
+    "total": 17,
+    "wins": 10,
+    "losses": 7,
+    "breakeven": 0,
+    "win_rate": 0.5882352941176471,
+    "loss_rate": 0.4117647058823529,
+    "avg_gain": 0.06853222346674459,
+    "avg_loss": -0.05382028677926108,
+    "profit_factor": 1.5310394246601768,
+    "expectancy_ret": 0.01815177807133048,
+    "avg_pnl": 1752.781648474459,
+    "total_pnl": 29797.2880240658,
+    "best": 0.17507986806122536,
+    "worst": -0.10243771527857189,
+    "avg_holding": 15.823529411764707
+  }
+}

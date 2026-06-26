@@ -1,0 +1,2 @@
+ticker,signal_date,signal_close,rsi_at_signal,signal_range,signal_body_percentile,signal_atr_mult,pattern,entry_date,entry_price,exit_date,exit_price,exit_reason,bars_held,gross_return,net_return,pnl,equity_after
+AAPL,2008-07-25,4.853126525878906,9.292470115599443,0.6537890434265137,0.28617273055477555,1.5624758997147503,Hammer,2008-08-01,4.859712600708008,2009-02-13,2.993539810180664,RSI > 90,28,-0.38400887950770224,-0.3856698112555069,-38566.98108698371,61433.01891301629

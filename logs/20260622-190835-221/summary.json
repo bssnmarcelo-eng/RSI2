@@ -1,0 +1,81 @@
+{
+  "run_id": "20260622-190835-221",
+  "timestamp": "2026-06-22T19:08:35",
+  "mode": "Single asset",
+  "meta": {
+    "ticker": "AAPL",
+    "start": "1990-01-05",
+    "end": "2026-06-22",
+    "candles": 1904
+  },
+  "config": {
+    "rsi_period": 2,
+    "rsi_entry_threshold": 10.0,
+    "min_price": 0.0,
+    "max_price": 0.0,
+    "patterns": {
+      "use_hammer": true,
+      "hammer": {
+        "percentile": 0.33,
+        "require_bullish_close": false,
+        "use_atr_filter": true,
+        "atr_period": 14,
+        "atr_multiple": 1.0
+      }
+    },
+    "entry_execution": "next_open",
+    "exit_execution": "next_open",
+    "exits": {
+      "use_rsi_exit": true,
+      "rsi_exit_threshold": 90.0,
+      "use_max_bars": false,
+      "max_bars": 5,
+      "use_profit_target": false,
+      "profit_target_pct": 5.0,
+      "use_stop_loss": false,
+      "stop_loss_pct": 3.0,
+      "use_sma_exit": false,
+      "sma_period": 5,
+      "use_signal_low_stop": false,
+      "use_rsi_cum_exit": false,
+      "rsi_cum_periods": 2,
+      "rsi_cum_threshold": 180.0
+    },
+    "costs": {
+      "model": "ibkr_fixed",
+      "commission_fixed": 0.0,
+      "commission_pct": 0.0,
+      "ibkr_per_share": 0.005,
+      "ibkr_min_per_order": 1.0,
+      "ibkr_max_pct": 0.01,
+      "slippage_bps": 0.0
+    },
+    "sizing": {
+      "method": "full",
+      "fixed_capital": 10000.0,
+      "percent": 100.0,
+      "allow_fractional": true
+    },
+    "initial_capital": 100000.0,
+    "ticker": "AAPL"
+  },
+  "metrics": {
+    "final_equity": 61433.01891301629,
+    "total_return": -0.3856698108698371,
+    "cagr": -0.01327433603510475,
+    "sharpe": -0.15319419259503067,
+    "sortino": -0.026500616450676494,
+    "max_drawdown": -0.5343061843791245,
+    "num_trades": 1,
+    "win_rate": 0.0,
+    "avg_gain": 0.0,
+    "avg_loss": -0.3856698112555069,
+    "profit_factor": 0.0,
+    "expectancy": -38566.98108698371,
+    "expectancy_return": -0.3856698112555069,
+    "avg_holding": 28.0,
+    "best_trade": -0.3856698112555069,
+    "worst_trade": -0.3856698112555069,
+    "exposure": 0.014705882352941176
+  }
+}
