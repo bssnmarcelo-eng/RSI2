@@ -1,0 +1,2 @@
+ticker,signal_date,signal_close,rsi_at_signal,signal_range,signal_body_percentile,signal_atr_mult,pattern,entry_date,entry_price,exit_date,exit_price,exit_reason,bars_held,gross_return,net_return,pnl,equity_after
+TESTX,2022-05-03,73.64,6.3134506231026535,2.530000000000001,0.28063241106719106,1.120413320261423,Hammer,2022-05-04,72.74,2022-05-06,76.16,RSI > 70,2,0.047016772064888634,0.046876073956973054,4687.607391009698,104687.6073910097

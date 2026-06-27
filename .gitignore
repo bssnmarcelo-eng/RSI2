@@ -8,3 +8,6 @@ env/
 .DS_Store
 Thumbs.db
 *.log
+
+# Claude Code local (per-machine) settings
+.claude/settings.local.json
