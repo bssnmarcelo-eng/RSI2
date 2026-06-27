@@ -1,11 +1,10 @@
 # RSI(2) + Candlestick Mean-Reversion Backtester
 
 A professional backtesting application for a long-only mean-reversion strategy,
-built with Python, Pandas, NumPy, Streamlit and Plotly. **Backtesting is fully
-local** — you upload your own historical OHLCV CSV; no external data is used. The
-optional **Market Screening** mode is the one exception: it pulls index
-constituents (Wikipedia) and OHLC bars (Yahoo Finance via `yfinance`) to scan for
-live signals.
+built with Python, Pandas, NumPy, Streamlit and Plotly. Data comes either from
+your own historical OHLCV CSVs (fully local) or from a local **Norgate Data**
+subscription (via the Norgate Data Updater). **Market Screening** scans a Norgate
+watchlist/database for live signals using the same local Norgate data.
 
 ---
 
@@ -42,14 +41,14 @@ A long **setup** is confirmed at a candle's **close** when **both** conditions h
   in-sample score with a poor out-of-sample score). Results include the best
   parameters, a sortable table of every combination, a heatmap when exactly two
   parameters are swept, and a CSV download. A safety cap limits the grid size.
-- **Market Screening** — scan an index for tickers **currently firing the entry
-  signal** on a chosen timeframe (60 min, daily, weekly, monthly). Constituents
-  are fetched from Wikipedia (Nasdaq 100, S&P 500/400/600/1500); OHLC bars come
-  from Yahoo Finance via `yfinance`, and the strategy's own signal logic
-  (RSI(2) + percentile hammer + ATR/price filters) is run on each ticker, so the
-  screen matches the backtest exactly. Hits are listed (most oversold first) with
-  a CSV download. **This mode uses external data** (the only part of the app that
-  does); it needs internet and the optional deps `yfinance lxml requests`.
+- **Market Screening** — scan a Norgate watchlist/database for tickers
+  **currently firing the entry signal** on a chosen timeframe (daily, weekly,
+  monthly). Symbols come from any local Norgate watchlist or database (which
+  include delisted and historical constituents); OHLC is fetched from Norgate, and
+  the strategy's own signal logic (RSI(2) + percentile hammer + ATR/price filters)
+  is run on each ticker, so the screen matches the backtest exactly. Hits are
+  listed (most oversold first) with a CSV download. Requires the `norgatedata`
+  package and the Norgate Data Updater (NDU) running locally.
 - **Portfolio (shared capital)** — run the same strategy across many tickers
   sharing **one capital pool** (a real portfolio, not independent backtests).
   Buying power is modelled IBKR-style: `buying_power = equity × leverage`.
@@ -254,3 +253,6 @@ backtest_app/
 - **Backtest results are hypothetical. Past performance does not guarantee future
   results.** Always test a strategy **out-of-sample** before any real use. This
   software is for research and education only and is **not** investment advice.
+
+
+  streamlit run app.py --server.headless true
