@@ -4,14 +4,21 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build --webpack && node scripts/prepare-dist.mjs",
+    "build": "vinext build && node scripts/prepare-sites.mjs",
+    "build:next": "next build --webpack",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "dev:vinext": "vinext dev --port 3001",
+    "build:vinext": "vinext build",
+    "start:vinext": "wrangler dev --config dist/server/wrangler.json",
+    "deploy:vinext": "vinext-cloudflare deploy --config dist/server/wrangler.json"
   },
   "dependencies": {
+    "@cloudflare/vite-plugin": "^1.51.1",
     "@hookform/resolvers": "latest",
+    "@vinext/cloudflare": "^1.0.0-beta.5",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "geist": "latest",
@@ -19,22 +26,29 @@
     "next": "16.3.0",
     "next-themes": "latest",
     "radix-ui": "^1.6.7",
-    "react": "19.2.0",
-    "react-dom": "19.2.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "react-hook-form": "latest",
+    "react-is": "^19.2.8",
+    "react-server-dom-webpack": "^19.2.8",
     "recharts": "latest",
     "shadcn": "^4.16.2",
     "sonner": "latest",
     "tailwind-merge": "^3.6.0",
+    "vinext": "^1.0.0-beta.5",
+    "wrangler": "^4.120.0",
     "zod": "latest"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "latest",
+    "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "latest",
     "@testing-library/react": "latest",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "^6.0.5",
+    "@vitejs/plugin-rsc": "^0.5.34",
     "eslint": "latest",
     "eslint-config-next": "16.3.0",
     "jsdom": "^27.2.0",
@@ -42,5 +56,6 @@
     "tw-animate-css": "latest",
     "typescript": "latest",
     "vitest": "latest"
-  }
+  },
+  "type": "module"
 }
