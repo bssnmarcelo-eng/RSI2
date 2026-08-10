@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
 
 
 class Execution(str, Enum):
@@ -146,6 +145,8 @@ class CostConfig:
 
     # --- Applies to all models ---
     slippage_bps: float = 0.0         # basis points moved against you per fill
+    annual_margin_rate: float = 0.0   # fraction/year charged on negative cash
+    annual_borrow_fee: float = 0.0    # fraction/year on short notional (future-proof; long-only = 0)
 
 
 @dataclass
@@ -204,6 +205,7 @@ class StrategyConfig:
 
     # --- Account ---
     initial_capital: float = 100_000.0
+    apply_corporate_actions: bool = False  # consume optional dividend/split columns
 
     ticker: str = ""
 

@@ -1,20 +1,17 @@
 """Grid-search parameter optimizer for the per-asset (pooled-trades) backtest.
 
-For every combination of the swept parameters this runs the strategy on each
-asset independently (full capital each), pools all trades, then splits the trades
-by entry date into an **in-sample (train)** set and an **out-of-sample (test)**
-set. Trade-level metrics are reported for both so you can tell whether a parameter
-choice generalises or is just curve-fit to the training window.
-
-Splitting the trades of a single full-period run by date is equivalent to running
-train-then-test separately for these trade-level statistics (the strategy is
-causal and nothing is fit *within* a run), and it is far cheaper.
+For every parameter combination the strategy is run independently in the
+in-sample and out-of-sample windows.  The test run starts with fresh capital but
+retains the earlier rows solely as causal indicator warm-up; an eligibility mask
+prevents any pre-test entry.  Consequently test P&L is never contaminated by
+capital accumulated in training.
 """
 from __future__ import annotations
 
 import copy
 import itertools
 import math
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -61,7 +58,8 @@ def generate_grid(param_ranges: Dict[str, List]) -> List[Dict]:
     if not param_ranges:
         return [{}]
     keys = list(param_ranges.keys())
-    return [dict(zip(keys, combo)) for combo in itertools.product(*(param_ranges[k] for k in keys))]
+    return [dict(zip(keys, combo, strict=True))
+            for combo in itertools.product(*(param_ranges[k] for k in keys))]
 
 
 def apply_params(base: StrategyConfig, combo: Dict) -> StrategyConfig:
@@ -129,6 +127,61 @@ def _split_date(data_by_ticker: Dict[str, pd.DataFrame], train_frac: float):
     return union[k - 1]
 
 
+def _window_trades(
+    data_by_ticker: Dict[str, pd.DataFrame],
+    cfg: StrategyConfig,
+    start_exclusive=None,
+    end_inclusive=None,
+) -> pd.DataFrame:
+    """Run one independent window, preserving prior rows as indicator warm-up.
+
+    ``_member`` is the engine's point-in-time entry eligibility column.  Combining
+    it with the requested window means warm-up rows can influence only causal
+    indicators, never entries. Each engine starts from ``cfg.initial_capital``.
+    """
+    from dataclasses import replace
+
+    frames = []
+    for ticker, data in data_by_ticker.items():
+        d = data.sort_index()
+        if end_inclusive is not None:
+            d = d.loc[d.index <= end_inclusive]
+        if d.empty:
+            continue
+
+        eligible = pd.Series(True, index=d.index, dtype=bool)
+        if start_exclusive is not None:
+            eligible &= d.index > start_exclusive
+        if "_member" in d.columns:
+            eligible &= d["_member"].fillna(False).astype(bool)
+        d = d.copy()
+        d["_member"] = eligible
+
+        res = BacktestEngine(d, replace(cfg, ticker=ticker)).run()
+        if not res.trades.empty:
+            frames.append(res.trades)
+
+    if frames:
+        return pd.concat(frames, ignore_index=True)
+    return pd.DataFrame(columns=["entry_date", "net_return", "pnl", "bars_held"])
+
+
+def _evaluate_combo(
+    data_by_ticker: Dict[str, pd.DataFrame],
+    base_cfg: StrategyConfig,
+    combo: Dict,
+    split_dt,
+    end_dt=None,
+) -> Tuple[Dict[str, float], Dict[str, float]]:
+    """Evaluate a combo with genuinely independent train and test executions."""
+    cfg = apply_params(base_cfg, combo)
+    train = _window_trades(data_by_ticker, cfg, end_inclusive=split_dt)
+    test = _window_trades(
+        data_by_ticker, cfg, start_exclusive=split_dt, end_inclusive=end_dt
+    )
+    return _trade_metrics(train), _trade_metrics(test)
+
+
 def run_grid(
     data_by_ticker: Dict[str, pd.DataFrame],
     base_cfg: StrategyConfig,
@@ -136,45 +189,107 @@ def run_grid(
     train_frac: float = 0.70,
     min_trades: int = 10,
     progress: Optional[Callable[[float], None]] = None,
+    workers: int = 1,
 ) -> Tuple[pd.DataFrame, object]:
     """Run the full grid. Returns (results_df, split_date).
 
     Each row holds the swept parameter values plus ``train_*`` and ``test_*``
     trade metrics, and a ``valid`` flag (train trade count >= ``min_trades``).
     """
-    from dataclasses import replace
-
     combos = generate_grid(param_ranges)
     split_dt = _split_date(data_by_ticker, train_frac)
     rows: List[Dict] = []
 
-    for j, combo in enumerate(combos):
-        cfg = apply_params(base_cfg, combo)
-        frames = []
-        for t, d in data_by_ticker.items():
-            res = BacktestEngine(d, replace(cfg, ticker=t)).run()
-            if not res.trades.empty:
-                frames.append(res.trades)
-        trades = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(
-            columns=["entry_date", "net_return", "pnl", "bars_held"])
+    def evaluate(combo):
+        return (_evaluate_combo(data_by_ticker, base_cfg, combo, split_dt)
+                if split_dt is not None
+                else (_trade_metrics(pd.DataFrame()), _trade_metrics(pd.DataFrame())))
 
-        if split_dt is not None and not trades.empty:
-            train = trades[trades["entry_date"] <= split_dt]
-            test = trades[trades["entry_date"] > split_dt]
-        else:
-            train, test = trades, trades.iloc[0:0]
+    executor = ThreadPoolExecutor(max_workers=int(workers)) if workers and workers > 1 else None
+    evaluated = executor.map(evaluate, combos) if executor else map(evaluate, combos)
+    try:
+        for j, (combo, metrics_pair) in enumerate(zip(combos, evaluated, strict=True)):
+            tr_m, te_m = metrics_pair
+            row = dict(combo)
+            for key, val in tr_m.items():
+                row[f"train_{key}"] = val
+            for key, val in te_m.items():
+                row[f"test_{key}"] = val
+            row["valid"] = tr_m["trades"] >= min_trades
+            rows.append(row)
 
-        tr_m = _trade_metrics(train)
-        te_m = _trade_metrics(test)
-        row = dict(combo)
-        for key, val in tr_m.items():
-            row[f"train_{key}"] = val
-        for key, val in te_m.items():
-            row[f"test_{key}"] = val
-        row["valid"] = tr_m["trades"] >= min_trades
-        rows.append(row)
-
-        if progress:
-            progress((j + 1) / len(combos))
+            if progress:
+                progress((j + 1) / len(combos))
+    finally:
+        if executor:
+            executor.shutdown(wait=True)
 
     return pd.DataFrame(rows), split_dt
+
+
+def run_walk_forward(
+    data_by_ticker: Dict[str, pd.DataFrame],
+    base_cfg: StrategyConfig,
+    param_ranges: Dict[str, List],
+    objective: str = "sharpe",
+    n_splits: int = 3,
+    initial_train_frac: float = 0.50,
+    min_trades: int = 10,
+    progress: Optional[Callable[[float], None]] = None,
+) -> pd.DataFrame:
+    """Expanding-window walk-forward optimization.
+
+    For each fold, all combinations are scored only through ``train_end``; the
+    best valid combination is then reported on the immediately following test
+    window. Returns one row per fold and does not change :func:`run_grid`'s API.
+    """
+    if objective not in OBJECTIVES:
+        raise ValueError(f"Unknown objective: {objective}")
+    if n_splits < 1:
+        raise ValueError("n_splits must be at least 1")
+    if not 0 < initial_train_frac < 1:
+        raise ValueError("initial_train_frac must be between 0 and 1")
+
+    union = sorted(set().union(*[d.index for d in data_by_ticker.values()]))
+    if len(union) < 3:
+        return pd.DataFrame()
+    first_test = max(1, min(len(union) - 1, int(round(len(union) * initial_train_frac))))
+    test_indices = np.array_split(np.arange(first_test, len(union)), n_splits)
+    test_indices = [idx for idx in test_indices if len(idx)]
+    combos = generate_grid(param_ranges)
+    rows: List[Dict] = []
+    total = max(1, len(test_indices) * len(combos))
+    done = 0
+
+    for fold, indices in enumerate(test_indices, start=1):
+        train_end = union[int(indices[0]) - 1]
+        test_end = union[int(indices[-1])]
+        candidates = []
+        for combo in combos:
+            train_m, test_m = _evaluate_combo(
+                data_by_ticker, base_cfg, combo, train_end, test_end
+            )
+            candidates.append((combo, train_m, test_m))
+            done += 1
+            if progress:
+                progress(done / total)
+
+        valid = [c for c in candidates if c[1]["trades"] >= min_trades]
+        pool = valid or candidates
+        best_combo, train_m, test_m = max(
+            pool,
+            key=lambda c: float(c[1].get(objective, float("-inf"))),
+        )
+        row = {
+            "fold": fold,
+            "train_end": train_end,
+            "test_start": union[int(indices[0])],
+            "test_end": test_end,
+            **best_combo,
+            **{f"train_{k}": v for k, v in train_m.items()},
+            **{f"test_{k}": v for k, v in test_m.items()},
+            "valid": train_m["trades"] >= min_trades,
+        }
+        rows.append(row)
+
+    return pd.DataFrame(rows)

@@ -31,7 +31,7 @@ def _entry_tab() -> dict:
     rsi_entry = c2.number_input("RSI entry threshold (buy when below)", min_value=0.0,
                                 max_value=100.0, value=10.0, step=1.0, key="p_rsi_entry")
 
-    st.markdown("**Price filter** — 0 = sem limite")
+    st.markdown("**Filtro de preço** — 0 = sem limite")
     c3, c4 = st.columns(2)
     min_price = c3.number_input("Min price", min_value=0.0, value=0.0, step=1.0, key="p_min_price",
                                 help="Só opera quando o close do candle de sinal ≥ este valor.")
@@ -40,14 +40,14 @@ def _entry_tab() -> dict:
 
     st.markdown("**Execution timing**")
     entry_exec = st.radio(
-        "Entry execution",
-        ["Next open (realistic)", "Limit at signal close (next bar)", "Signal close (less realistic)"],
+        "Execução da entrada",
+        ["Próxima abertura (realista)", "Limite no fechamento do sinal (próximo candle)", "Fechamento do sinal (menos realista)"],
         index=0, key="p_entry_exec",
         help="Limit: a buy limit at the signal candle's close, valid only the next bar — "
              "fills at the open if it gaps below the limit, at the limit if price retraces down "
              "to it, otherwise no trade.")
     exit_exec = st.radio(
-        "Exit execution", ["Next open (realistic)", "Signal close (less realistic)"], index=0,
+        "Execução da saída", ["Próxima abertura (realista)", "Fechamento do sinal (menos realista)"], index=0,
         key="p_exit_exec")
 
     st.markdown("**🕯️ Candlestick Pattern (Hammer)**")
@@ -67,37 +67,45 @@ def _entry_tab() -> dict:
                                    key="p_atr_mult")
         atr_period = st.number_input("ATR period", min_value=1, max_value=200, value=14, step=1,
                                      key="p_atr_period")
+    apply_actions = st.checkbox(
+        "Aplicar dividendos e desdobramentos das colunas do CSV",
+        value=False,
+        key="p_corporate_actions",
+        help="Ative somente para preços não ajustados com colunas dividend e/ou split; "
+             "não ative para séries Total Return ou já ajustadas.",
+    )
     return {
         "rsi_period": rsi_period, "rsi_entry": rsi_entry,
         "min_price": min_price, "max_price": max_price,
         "entry_exec": entry_exec, "exit_exec": exit_exec,
         "use_hammer": use_hammer, "percentile": percentile, "require_bull": require_bull,
         "use_atr": use_atr, "atr_mult": atr_mult, "atr_period": atr_period,
+        "apply_actions": apply_actions,
     }
 
 
 def _exits_tab() -> ExitConfig:
     """Render exit-rule widgets; return an ExitConfig."""
-    st.caption("When several are enabled, the first triggered exit wins.")
-    use_rsi_exit = st.checkbox("Exit when RSI closes above threshold", value=True, key="p_use_rsi_exit")
-    rsi_exit = st.number_input("RSI exit threshold", min_value=0.0, max_value=100.0, value=70.0,
+    st.caption("Quando várias regras estão ativas, prevalece a primeira acionada.")
+    use_rsi_exit = st.checkbox("Sair quando o RSI fechar acima do limite", value=True, key="p_use_rsi_exit")
+    rsi_exit = st.number_input("Limite de RSI para saída", min_value=0.0, max_value=100.0, value=70.0,
                                step=1.0, key="p_rsi_exit")
-    use_max_bars = st.checkbox("Exit after N bars (time stop)", value=True, key="p_use_max_bars")
-    max_bars = st.number_input("Max bars held", min_value=1, max_value=1000, value=5, step=1,
+    use_max_bars = st.checkbox("Sair após N candles", value=True, key="p_use_max_bars")
+    max_bars = st.number_input("Máximo de candles na posição", min_value=1, max_value=1000, value=5, step=1,
                                key="p_max_bars")
-    use_pt = st.checkbox("Exit at profit target", value=False, key="p_use_pt")
-    pt_pct = st.number_input("Profit target (%)", min_value=0.0, value=5.0, step=0.5, key="p_pt_pct")
-    use_sl = st.checkbox("Exit at stop loss", value=False, key="p_use_sl")
+    use_pt = st.checkbox("Sair no alvo de lucro", value=False, key="p_use_pt")
+    pt_pct = st.number_input("Alvo de lucro (%)", min_value=0.0, value=5.0, step=0.5, key="p_pt_pct")
+    use_sl = st.checkbox("Sair no stop loss", value=False, key="p_use_sl")
     sl_pct = st.number_input("Stop loss (%)", min_value=0.0, value=3.0, step=0.5, key="p_sl_pct")
-    use_sma = st.checkbox("Exit when close > SMA(n)", value=False, key="p_use_sma")
-    sma_period = st.number_input("SMA period (exit)", min_value=1, max_value=200, value=5, step=1,
+    use_sma = st.checkbox("Sair quando fechamento > SMA(n)", value=False, key="p_use_sma")
+    sma_period = st.number_input("Período da SMA de saída", min_value=1, max_value=200, value=5, step=1,
                                  key="p_sma_period")
     use_signal_low_stop = st.checkbox(
         "Stop loss at signal candle's low", value=False, key="p_use_sls",
         help="Intrabar hard stop: if a bar's low pierces the signal (pattern) candle's "
              "low, exit within that bar at the stop level (or at the open if it gaps below).")
     use_rsi_cum_exit = st.checkbox(
-        "Exit when RSI(n) acumulado > X", value=False, key="p_use_rsi_cum",
+        "Sair quando RSI(n) acumulado > X", value=False, key="p_use_rsi_cum",
         help="Soma do RSI dos últimos N períodos. Captura exaustão da reversão mesmo quando "
              "o RSI individual ainda não atingiu o threshold padrão.")
     col_rc1, col_rc2 = st.columns(2)
@@ -126,7 +134,7 @@ def _costs_tab() -> CostConfig:
     """
     st.caption("Applied on every fill — entry and exit each count as one order.")
     cost_model = st.selectbox(
-        "Commission model", ["IBKR Pro — Fixed (US stocks)", "Generic (fixed + %)"], index=0,
+        "Modelo de comissão", ["IBKR Pro — Fixa (ações dos EUA)", "Genérica (fixa + %)"], index=0,
         key="p_cost_model")
     with st.expander("IBKR Pro — Fixed parameters", expanded=cost_model.startswith("IBKR")):
         per_share = st.number_input("USD per share", min_value=0.0, value=0.005, step=0.001,
@@ -137,13 +145,18 @@ def _costs_tab() -> CostConfig:
                                   value=1.0, step=0.5, key="p_ibkr_maxpct") / 100.0
         st.caption("IBKR Pro · Fixed: USD 0.005/share, min USD 1.00/order, max 1% of trade "
                    "value (includes exchange & regulatory fees).")
-    with st.expander("Generic parameters", expanded=cost_model.startswith("Generic")):
+    with st.expander("Parâmetros da comissão genérica", expanded=cost_model.startswith("Genérica")):
         comm_fixed = st.number_input("Fixed commission per fill", min_value=0.0, value=0.0, step=0.5,
                                      key="p_gen_fixed")
-        comm_pct = st.number_input("Commission (% of notional)", min_value=0.0, value=0.0, step=0.01,
+        comm_pct = st.number_input("Comissão (% do notional)", min_value=0.0, value=0.0, step=0.01,
                                    format="%.4f", key="p_gen_pct") / 100.0
-    slippage = st.number_input("Slippage (basis points)", min_value=0.0, value=0.0, step=1.0,
+    slippage = st.number_input("Slippage (pontos-base)", min_value=0.0, value=0.0, step=1.0,
                                key="p_slippage")
+    margin_rate = st.number_input("Juros anuais de margem (%)", min_value=0.0, value=0.0,
+                                  step=0.5, key="p_margin_rate") / 100.0
+    borrow_fee = st.number_input("Taxa anual de aluguel para posições vendidas (%)", min_value=0.0,
+                                 value=0.0, step=0.5, key="p_borrow_fee",
+                                 help="A estratégia atual é somente comprada; o campo fica preparado para suporte futuro a shorts.") / 100.0
     if cost_model.startswith("IBKR"):
         costs = CostConfig(model=CommissionModel.IBKR_FIXED, ibkr_per_share=float(per_share),
                            ibkr_min_per_order=float(min_order), ibkr_max_pct=float(max_pct))
@@ -151,24 +164,26 @@ def _costs_tab() -> CostConfig:
         costs = CostConfig(model=CommissionModel.GENERIC, commission_fixed=float(comm_fixed),
                            commission_pct=float(comm_pct))
     costs.slippage_bps = float(slippage)
+    costs.annual_margin_rate = float(margin_rate)
+    costs.annual_borrow_fee = float(borrow_fee)
     return costs
 
 
 def _single_sizing_tab() -> tuple[float, SizingConfig]:
     """Single-asset capital & position-sizing widgets; return (initial_capital, SizingConfig)."""
-    initial_capital = st.number_input("Initial capital", min_value=1.0, value=100_000.0,
+    initial_capital = st.number_input("Capital inicial", min_value=1.0, value=100_000.0,
                                       step=1000.0, key="p_init_cap")
     label = st.selectbox(
-        "Sizing method", ["Full equity", "Fixed capital per trade", "Percentage of equity"],
+        "Método de dimensionamento", ["Capital integral", "Capital fixo por operação", "Percentual do patrimônio"],
         index=0, key="p_sizing_method")
     c1, c2 = st.columns(2)
-    fixed_capital = c1.number_input("Fixed capital per trade", min_value=1.0, value=10_000.0,
+    fixed_capital = c1.number_input("Capital fixo por operação", min_value=1.0, value=10_000.0,
                                     step=1000.0, key="p_fixed_cap")
     percent = c2.number_input("Percent of equity (%)", min_value=0.0, max_value=100.0,
                               value=100.0, step=5.0, key="p_percent")
     allow_fractional = st.checkbox("Allow fractional shares", value=True, key="p_frac_single")
-    method = {"Full equity": SizingMethod.FULL, "Fixed capital per trade": SizingMethod.FIXED,
-              "Percentage of equity": SizingMethod.PERCENT}[label]
+    method = {"Capital integral": SizingMethod.FULL, "Capital fixo por operação": SizingMethod.FIXED,
+              "Percentual do patrimônio": SizingMethod.PERCENT}[label]
     return float(initial_capital), SizingConfig(
         method=method, fixed_capital=float(fixed_capital),
         percent=float(percent), allow_fractional=bool(allow_fractional))
@@ -176,14 +191,14 @@ def _single_sizing_tab() -> tuple[float, SizingConfig]:
 
 def _portfolio_tab() -> PortfolioConfig:
     """Portfolio (shared capital) sizing widgets; return a PortfolioConfig."""
-    initial_capital = st.number_input("Initial capital (shared pool)", min_value=1.0,
+    initial_capital = st.number_input("Capital inicial compartilhado", min_value=1.0,
                                       value=100_000.0, step=1000.0, key="p_pf_cap")
     sizing_label = st.radio(
-        "Position sizing",
-        ["% of equity per trade", "Full equity per trade (unlimited margin)"],
+        "Dimensionamento das posições",
+        ["% do patrimônio por operação", "Capital integral por operação (margem ilimitada)"],
         index=0, key="p_pf_sizing",
-        help="'% of equity' caps exposure at equity × leverage. 'Full equity' puts 100% of "
-             "the account into every signal with no buying-power limit (fully leveraged).")
+        help="O modo percentual limita a exposição pelo patrimônio × alavancagem. O modo integral "
+             "aloca 100% da conta em cada sinal sem limite de poder de compra.")
     allow_fractional = st.checkbox("Allow fractional shares", value=True, key="p_pf_frac")
     c1, c2 = st.columns(2)
     pct_per_trade = c1.number_input("% of equity per trade (notional)", min_value=0.1,
@@ -194,7 +209,7 @@ def _portfolio_tab() -> PortfolioConfig:
     cap = st.number_input("Max simultaneous positions (0 = unlimited)", min_value=0,
                           max_value=500, value=0, step=1, key="p_pf_maxpos")
 
-    if sizing_label.startswith("Full equity"):
+    if sizing_label.startswith("Capital integral"):
         st.warning(
             "⚠️ Margem ilimitada: cada sinal aloca **100% do patrimônio**. A exposição "
             "pode passar de 100% (200%, 300%+) e o caixa pode ficar muito negativo. "
@@ -267,12 +282,13 @@ def configuration_form(mode: str, *, with_run: bool):
             ),
         ),
         entry_execution=(
-            Execution.NEXT_OPEN if e["entry_exec"].startswith("Next")
-            else Execution.LIMIT_AT_CLOSE if e["entry_exec"].startswith("Limit")
+            Execution.NEXT_OPEN if e["entry_exec"].startswith("Próxima")
+            else Execution.LIMIT_AT_CLOSE if e["entry_exec"].startswith("Limite")
             else Execution.SIGNAL_CLOSE),
-        exit_execution=Execution.NEXT_OPEN if e["exit_exec"].startswith("Next") else Execution.SIGNAL_CLOSE,
+        exit_execution=Execution.NEXT_OPEN if e["exit_exec"].startswith("Próxima") else Execution.SIGNAL_CLOSE,
         exits=ex,
         costs=costs,
+        apply_corporate_actions=bool(e["apply_actions"]),
     )
     if sizing is not None:
         cfg.sizing = sizing

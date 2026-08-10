@@ -1,8 +1,6 @@
 """Point-in-time index membership: mask construction and entry-signal gating."""
 from __future__ import annotations
 
-import pandas as pd
-
 from src.backtest_engine import BacktestEngine, build_signal_frame
 from src.norgate_loader import _mask_from_intervals
 from tests._helpers import ONE_HAMMER_ROWS, make_config, make_ohlc

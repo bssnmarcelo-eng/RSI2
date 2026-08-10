@@ -11,7 +11,7 @@ def save_to_log(mode: str, summary: dict, tables: dict, full: dict) -> None:
     """Persist a run to the backtest log; never let a logging error break the app."""
     try:
         run_id = logger.log_run(mode, summary, tables, full)
-        st.success(f"💾 Saved to backtest log: **{run_id}** (see the *Backtest Log* mode).")
+        st.success(f"Execução salva no histórico: **{run_id}**.")
     except Exception as exc:
         st.warning(f"Could not write to the backtest log: {exc}")
 

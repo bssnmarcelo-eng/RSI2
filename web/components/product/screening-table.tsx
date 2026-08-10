@@ -1,0 +1,18 @@
+"use client";
+import Link from "next/link";
+import { useMemo, useState } from "react";
+import { BarChart3, FlaskConical, Search, SlidersHorizontal } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { DataState } from "@/components/product/data-state";
+import { screeningRows } from "@/lib/demo-data";
+
+export function ScreeningTable(){const[q,setQ]=useState("");const rows=useMemo(()=>screeningRows.filter(r=>r.ticker.includes(q.toUpperCase())),[q]);return <>
+  <Card className="mb-6 shadow-none"><CardContent className="grid gap-4 p-5 md:grid-cols-[minmax(220px,1fr)_180px_180px_auto] md:items-end"><div><Label htmlFor="screen-search">Ativo</Label><div className="relative mt-2"><Search className="absolute left-3 top-3 size-4 text-muted-foreground"/><Input id="screen-search" value={q} onChange={e=>setQ(e.target.value)} placeholder="Buscar ticker" className="pl-9"/></div></div><div><Label>RSI máximo</Label><Input className="mt-2" type="number" defaultValue="20"/></div><div><Label>Liquidez mínima</Label><Select defaultValue="50"><SelectTrigger className="mt-2"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="20">R$ 20 mi/dia</SelectItem><SelectItem value="50">R$ 50 mi/dia</SelectItem><SelectItem value="100">R$ 100 mi/dia</SelectItem></SelectContent></Select></div><Button variant="outline"><SlidersHorizontal className="size-4"/>Mais filtros</Button></CardContent></Card>
+  {rows.length?<Card className="shadow-none"><CardContent className="p-0"><div className="flex items-center justify-between border-b p-5"><div><strong className="text-sm">{rows.length} oportunidades</strong><p className="text-xs text-muted-foreground">Fechamento de 07/08/2026 · dados ajustados</p></div><Badge variant="secondary">Ordenado por qualidade</Badge></div><div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Ativo</TableHead><TableHead>Preço</TableHead><TableHead className="text-right">RSI(2)</TableHead><TableHead>Sinal</TableHead><TableHead>Liquidez</TableHead><TableHead className="text-right">Dist. MM200</TableHead><TableHead className="text-right">Qualidade</TableHead><TableHead><span className="sr-only">Ações</span></TableHead></TableRow></TableHeader><TableBody>{rows.map(r=><TableRow key={r.ticker}><TableCell className="font-medium">{r.ticker}</TableCell><TableCell>{r.price}</TableCell><TableCell className="text-right font-mono">{r.rsi}</TableCell><TableCell><Badge variant={r.setup==="Entrada"?"default":"outline"}>{r.setup}</Badge></TableCell><TableCell>{r.liquidity}</TableCell><TableCell className="text-right text-destructive">{r.distance}</TableCell><TableCell className="text-right font-mono">{r.quality}/100</TableCell><TableCell><div className="flex justify-end gap-1"><Button size="icon" variant="ghost" aria-label={`Ver fundamentos de ${r.ticker}`} asChild><Link href={`/fundamentals?ticker=${r.ticker}`}><BarChart3 className="size-4"/></Link></Button><Button size="icon" variant="ghost" aria-label={`Testar ${r.ticker}`} asChild><Link href="/backtests"><FlaskConical className="size-4"/></Link></Button></div></TableCell></TableRow>)}</TableBody></Table></div></CardContent></Card>:<DataState type="empty" title="Nenhum ativo encontrado" description="Altere o ticker ou relaxe os filtros para ampliar o universo." action="Limpar filtros"/>}
+  </>}

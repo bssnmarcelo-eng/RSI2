@@ -1,0 +1,46 @@
+{
+  "name": "rsi2-research-lab",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build --webpack",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "latest",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "geist": "latest",
+    "lucide-react": "latest",
+    "next": "16.3.0",
+    "next-themes": "latest",
+    "radix-ui": "^1.6.7",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-hook-form": "latest",
+    "recharts": "latest",
+    "shadcn": "^4.16.2",
+    "sonner": "latest",
+    "tailwind-merge": "^3.6.0",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "latest",
+    "@testing-library/jest-dom": "latest",
+    "@testing-library/react": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "eslint": "latest",
+    "eslint-config-next": "16.3.0",
+    "jsdom": "^27.2.0",
+    "tailwindcss": "latest",
+    "tw-animate-css": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  }
+}

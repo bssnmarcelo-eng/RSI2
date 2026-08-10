@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-st.set_page_config(page_title="RSI(2) + Candlestick Backtester", page_icon="📈", layout="wide")
+st.set_page_config(page_title="RSI(2) · Laboratório de estratégias", page_icon="📈", layout="wide")
 
 from ui.data_source import build_data_source_params  # noqa: E402
 from ui.modes import (  # noqa: E402
@@ -20,41 +20,40 @@ from ui.modes import (  # noqa: E402
     run_screening_mode,
 )
 from ui.text import DISCLAIMER, STRATEGY_DESCRIPTION  # noqa: E402
+from ui.theme import apply_theme  # noqa: E402
 
 
 def main() -> None:
-    st.title("📈 RSI(2) + Candlestick Mean-Reversion Backtester")
+    apply_theme()
+    st.title("RSI(2) · Laboratório de estratégias")
     st.markdown(STRATEGY_DESCRIPTION)
-    with st.expander("Important assumptions & disclaimer", expanded=False):
+    with st.expander("Premissas importantes e aviso de risco", expanded=False):
         st.markdown(DISCLAIMER)
 
-    st.sidebar.header("🧭 Mode")
+    st.sidebar.header("Navegação")
     mode = st.sidebar.radio(
-        "Backtest mode",
-        ["Portfolio (shared capital)", "Per-asset (independent)",
-         "Optimizer (per-asset grid)", "🔎 Market Screening", "💼 Análise Fundamentalista",
-         "📁 Backtest Log"],
+        "Área",
+        ["Carteira (capital compartilhado)", "Por ativo (independente)",
+         "Otimizador (grade por ativo)", "Screening de mercado", "Análise fundamentalista",
+         "Histórico de backtests"],
         index=0,
-        help="Portfolio = one shared capital pool with aggregated results. "
-             "Per-asset = every asset tested independently with the full capital "
-             "(use it with a single ticker too). Optimizer = grid-search parameters on the "
-             "per-asset pooled trades with an in/out-of-sample split. Market Screening = scan an "
-             "index for tickers firing the signal now. Análise Fundamentalista = "
-             "fundamentos atuais de um ativo (Norgate). Backtest Log = saved-run history.")
+        help="Carteira usa um único capital compartilhado. Por ativo reaplica o capital "
+             "independentemente. O otimizador pesquisa parâmetros com validação fora da amostra. "
+             "Screening procura sinais atuais; fundamentos usa dados Norgate; histórico abre execuções salvas.")
 
-    if mode.startswith("📁"):
+    if mode.startswith("Histórico"):
         run_log_mode()
         st.markdown("---")
         st.caption(DISCLAIMER)
         return
 
-    if mode.startswith("🔎"):
+    if mode.startswith("Screening"):
         run_screening_mode()
         st.markdown("---")
         st.caption(DISCLAIMER)
         return
 
-    if mode.startswith("💼"):
+    if mode.startswith("Análise"):
         run_fundamentals_mode()
         st.markdown("---")
         st.caption(DISCLAIMER)
@@ -63,13 +62,12 @@ def main() -> None:
     data_src = build_data_source_params()
 
     note = st.sidebar.text_input(
-        "Run label / note (optional)",
-        help="Saved with the run in the backtest log to help you find it later "
-             "(e.g. 'IBKR 2x leverage test').")
+        "Nome ou observação da execução (opcional)",
+        help="Fica salvo no histórico para facilitar a busca posterior, por exemplo: 'IBKR 2x'.")
 
-    if mode.startswith("Per-asset"):
+    if mode.startswith("Por ativo"):
         run_per_asset_mode(note, data_src)
-    elif mode.startswith("Optimizer"):
+    elif mode.startswith("Otimizador"):
         run_optimizer_mode(note, data_src)
     else:
         run_portfolio_mode(note, data_src)

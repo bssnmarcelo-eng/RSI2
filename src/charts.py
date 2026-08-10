@@ -256,6 +256,20 @@ def equity_chart(equity: pd.Series, initial_capital: float) -> go.Figure:
     return fig
 
 
+def benchmark_chart(equity: pd.Series, benchmark: pd.Series, title: str = "Estratégia vs. benchmark") -> go.Figure:
+    """Compare normalized strategy and benchmark equity on a shared timeline."""
+    aligned = pd.concat([equity.rename("Estratégia"), benchmark.rename("Benchmark")], axis=1).dropna()
+    fig = go.Figure()
+    if not aligned.empty:
+        normalized = aligned / aligned.iloc[0] * 100.0
+        fig.add_trace(go.Scatter(x=normalized.index, y=normalized["Estratégia"],
+                                 name="Estratégia", line=dict(color="#315CF4", width=2)))
+        fig.add_trace(go.Scatter(x=normalized.index, y=normalized["Benchmark"],
+                                 name="Benchmark", line=dict(color="#5E6B78", width=2, dash="dash")))
+    fig.update_layout(title=title, yaxis_title="Base 100", hovermode="x unified")
+    return fig
+
+
 def drawdown_chart(equity: pd.Series) -> go.Figure:
     """Underwater (drawdown) curve as a filled area."""
     dd = drawdown_series(equity) * 100.0

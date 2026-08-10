@@ -1,0 +1,4 @@
+-r requirements.txt
+yfinance>=0.2.40
+lxml>=5.0
+requests>=2.27

@@ -5,6 +5,12 @@ import pandas as pd
 import streamlit as st
 
 from src import charts, norgate_loader
+from src.advanced_analysis import (
+    buy_and_hold_equity,
+    compare_with_benchmark,
+    monte_carlo_summary,
+    monte_carlo_trades,
+)
 from src.utils import fmt_money, fmt_num, fmt_pct
 
 
@@ -20,9 +26,9 @@ def _index_name_from_state():
 
 
 def render_trade_log(trades: pd.DataFrame, equity: pd.Series, key: str) -> None:
-    st.subheader("📒 Trade Log")
+    st.subheader("Registro de operações")
     if trades.empty:
-        st.info("No trades were generated with the current parameters.")
+        st.info("Nenhuma operação foi gerada com os parâmetros atuais.")
         return
     display = trades.copy()
     for col in ["signal_close", "entry_price", "exit_price", "pnl", "equity_after"]:
@@ -41,37 +47,45 @@ def render_trade_log(trades: pd.DataFrame, equity: pd.Series, key: str) -> None:
             display[mfe_col] = trades[mfe_col].map(lambda v: fmt_pct(v) if pd.notna(v) else "—")
     st.dataframe(display, use_container_width=True, hide_index=True)
     cols = st.columns(2)
-    cols[0].download_button("⬇️ Download trade log (CSV)", data=trades.to_csv(index=False).encode("utf-8"),
+    cols[0].download_button("Baixar operações (CSV)", data=trades.to_csv(index=False).encode("utf-8"),
                             file_name="trade_log.csv", mime="text/csv", key=f"{key}_trades")
     eq = equity.rename("equity").to_frame()
     eq.index.name = "date"
-    cols[1].download_button("⬇️ Download equity curve (CSV)", data=eq.to_csv().encode("utf-8"),
+    cols[1].download_button("Baixar curva patrimonial (CSV)", data=eq.to_csv().encode("utf-8"),
                             file_name="equity_curve.csv", mime="text/csv", key=f"{key}_equity")
 
 
 def render_portfolio_metrics(metrics: dict, result) -> None:
-    st.subheader("📊 Portfolio Performance")
+    st.subheader("Desempenho da carteira")
     r1 = st.columns(4)
-    r1[0].metric("Final equity", fmt_money(metrics["final_equity"]))
-    r1[1].metric("Total return", fmt_pct(metrics["total_return"]))
+    r1[0].metric("Patrimônio final", fmt_money(metrics["final_equity"]))
+    r1[1].metric("Retorno total", fmt_pct(metrics["total_return"]))
     r1[2].metric("CAGR", fmt_pct(metrics["cagr"]))
-    r1[3].metric("Max drawdown", fmt_pct(metrics["max_drawdown"]))
+    r1[3].metric("Drawdown máximo", fmt_pct(metrics["max_drawdown"]))
     r2 = st.columns(4)
-    r2[0].metric("Trades", f"{metrics['num_trades']}")
-    r2[1].metric("Win rate", fmt_pct(metrics["win_rate"]))
+    r2[0].metric("Operações", f"{metrics['num_trades']}")
+    r2[1].metric("Taxa de acerto", fmt_pct(metrics["win_rate"]))
     pf = metrics["profit_factor"]
-    r2[2].metric("Profit factor", "∞" if pf == float("inf") else fmt_num(pf))
-    r2[3].metric("Expectancy / trade", fmt_money(metrics["expectancy"]))
+    r2[2].metric("Fator de lucro", "∞" if pf == float("inf") else fmt_num(pf))
+    r2[3].metric("Expectativa por operação", fmt_money(metrics["expectancy"]))
     r3 = st.columns(4)
     r3[0].metric("Sharpe", fmt_num(metrics["sharpe"]))
     r3[1].metric("Sortino", fmt_num(metrics["sortino"]))
-    r3[2].metric("Time in market", fmt_pct(result.time_in_market))
-    r3[3].metric("Avg positions", fmt_num(result.avg_positions, 2))
+    r3[2].metric("Tempo no mercado", fmt_pct(result.time_in_market))
+    r3[3].metric("Média de posições", fmt_num(result.avg_positions, 2))
     r4 = st.columns(4)
-    r4[0].metric("Peak concurrent", f"{result.max_concurrent}")
-    r4[1].metric("Max gross exposure", fmt_pct(result.exposure.max()))
-    r4[2].metric("Best trade", fmt_pct(metrics["best_trade"]))
-    r4[3].metric("Worst trade", fmt_pct(metrics["worst_trade"]))
+    r4[0].metric("Pico simultâneo", f"{result.max_concurrent}")
+    r4[1].metric("Exposição bruta máxima", fmt_pct(result.exposure.max()))
+    r4[2].metric("Melhor operação", fmt_pct(metrics["best_trade"]))
+    r4[3].metric("Pior operação", fmt_pct(metrics["worst_trade"]))
+    r5 = st.columns(3)
+    r5[0].metric("Calmar", fmt_num(metrics.get("calmar", 0.0)))
+    r5[1].metric("Ulcer Index", fmt_pct(metrics.get("ulcer_index", 0.0)))
+    r5[2].metric("Volatilidade anual", fmt_pct(metrics.get("volatility", 0.0)))
+    if result.financing_costs or result.dividend_income:
+        r6 = st.columns(2)
+        r6[0].metric("Juros de margem", fmt_money(-result.financing_costs))
+        r6[1].metric("Dividendos recebidos", fmt_money(result.dividend_income))
 
 
 def per_ticker_table(trades: pd.DataFrame, indexname: str | None = None) -> pd.DataFrame:
@@ -99,7 +113,7 @@ def per_ticker_table(trades: pd.DataFrame, indexname: str | None = None) -> pd.D
 
 def render_portfolio(result) -> None:
     cfg = result.config
-    st.subheader("📈 Portfolio Charts")
+    st.subheader("Gráficos da carteira")
     c1, c2 = st.columns(2)
     c1.plotly_chart(charts.equity_chart(result.equity_curve, result.portfolio.initial_capital),
                     use_container_width=True)
@@ -112,15 +126,51 @@ def render_portfolio(result) -> None:
     c6.plotly_chart(charts.yearly_bar(result.equity_curve), use_container_width=True)
     st.plotly_chart(charts.monthly_heatmap(result.equity_curve), use_container_width=True)
 
-    st.subheader("🏷️ Per-Ticker Breakdown")
+    st.subheader("Comparação com benchmark")
+    benchmark_ticker = st.selectbox(
+        "Benchmark (buy and hold)", sorted(result.frames), key="portfolio_benchmark"
+    )
+    benchmark = buy_and_hold_equity(
+        result.frames[benchmark_ticker]["close"], result.portfolio.initial_capital
+    )
+    comparison = compare_with_benchmark(result.equity_curve, benchmark)
+    if comparison:
+        bcols = st.columns(3)
+        bcols[0].metric("Retorno da estratégia", fmt_pct(comparison["strategy_return"]))
+        bcols[1].metric(f"Retorno de {benchmark_ticker}", fmt_pct(comparison["benchmark_return"]))
+        bcols[2].metric("Retorno excedente", fmt_pct(comparison["excess_return"]))
+        st.plotly_chart(
+            charts.benchmark_chart(result.equity_curve, benchmark, f"Estratégia vs. {benchmark_ticker}"),
+            use_container_width=True,
+        )
+
+    with st.expander("Simulação Monte Carlo das operações", expanded=False):
+        simulations = monte_carlo_trades(
+            result.trades, result.portfolio.initial_capital, simulations=2_000
+        )
+        summary = monte_carlo_summary(simulations)
+        if not summary:
+            st.info("São necessárias operações para executar a simulação.")
+        else:
+            st.caption(
+                "Bootstrap das operações observadas; mede incerteza de sequência e amostragem, "
+                "não prevê mudanças futuras de regime."
+            )
+            mcols = st.columns(4)
+            mcols[0].metric("Probabilidade de perda", fmt_pct(summary["probability_of_loss"]))
+            mcols[1].metric("Retorno P5", fmt_pct(summary["return_p05"]))
+            mcols[2].metric("Retorno mediano", fmt_pct(summary["return_median"]))
+            mcols[3].metric("Retorno P95", fmt_pct(summary["return_p95"]))
+
+    st.subheader("Detalhamento por ativo")
     if result.trades.empty:
-        st.info("No trades were generated with the current parameters.")
+        st.info("Nenhuma operação foi gerada com os parâmetros atuais.")
     else:
         st.dataframe(per_ticker_table(result.trades, _index_name_from_state()),
                      use_container_width=True, hide_index=True)
 
     # Drill-down: inspect one asset's price + signals.
-    st.subheader("🔍 Inspect an Asset")
+    st.subheader("Inspecionar um ativo")
     tickers = sorted(result.frames.keys())
     sel = st.selectbox("Ticker", tickers)
     frame = result.frames[sel]
@@ -175,7 +225,6 @@ def per_asset_summary_table(
     trades: pd.DataFrame, indexname: str | None = None
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Rich per-ticker statistics. Returns (display_df, raw_df) sorted by Total PnL desc."""
-    import numpy as np
 
     rows = []
     for ticker, g in trades.groupby("ticker"):
@@ -261,9 +310,9 @@ def per_asset_summary_table(
 
 def render_trades_overview(trades: pd.DataFrame, n_assets: int) -> None:
     """Aggregate trades panorama + table of every operation (per-asset mode)."""
-    st.subheader("📊 Trades Overview")
+    st.subheader("Visão geral das operações")
     if trades.empty:
-        st.info("No trades were generated with the current parameters.")
+        st.info("Nenhuma operação foi gerada com os parâmetros atuais.")
         return
 
     s = aggregate_trade_stats(trades)
@@ -290,7 +339,7 @@ def render_trades_overview(trades: pd.DataFrame, n_assets: int) -> None:
     r3[3].metric("Avg holding (bars)", fmt_num(s["avg_holding"], 1))
 
     # Per-asset breakdown table.
-    st.subheader("📋 Per-Asset Breakdown")
+    st.subheader("Detalhamento por ativo")
     st.caption(
         "Each row is one ticker backtested independently. "
         "Sorted by Total PnL descending. "
@@ -319,7 +368,7 @@ def render_trades_overview(trades: pd.DataFrame, n_assets: int) -> None:
         key="per_asset_tbl",
     )
     st.download_button(
-        "⬇️ Download per-asset summary (CSV)",
+        "Baixar resumo por ativo (CSV)",
         data=raw_tbl.sort_values(sort_col, ascending=False).to_csv(index=False).encode("utf-8"),
         file_name="per_asset_summary.csv",
         mime="text/csv",
@@ -345,11 +394,21 @@ def render_trades_overview(trades: pd.DataFrame, n_assets: int) -> None:
             )
 
     # Distribution of all trade returns.
-    st.subheader("📈 Return Distribution (all assets pooled)")
+    st.subheader("Distribuição dos retornos agregados")
     st.plotly_chart(charts.returns_histogram(trades), use_container_width=True)
 
+    with st.expander("Simulação Monte Carlo agregada", expanded=False):
+        simulations = monte_carlo_trades(trades, simulations=2_000)
+        summary = monte_carlo_summary(simulations)
+        if summary:
+            cols = st.columns(4)
+            cols[0].metric("Probabilidade de perda", fmt_pct(summary["probability_of_loss"]))
+            cols[1].metric("Retorno P5", fmt_pct(summary["return_p05"]))
+            cols[2].metric("Retorno mediano", fmt_pct(summary["return_median"]))
+            cols[3].metric("Retorno P95", fmt_pct(summary["return_p95"]))
+
     # Table with every operation (all assets), most recent first.
-    st.subheader("📒 All Operations")
+    st.subheader("Todas as operações")
     cols_order = ["ticker", "signal_date", "rsi_at_signal", "signal_range",
                   "signal_body_percentile", "signal_atr_mult", "pattern", "entry_date",
                   "entry_price", "exit_date", "exit_price", "exit_reason", "bars_held",
@@ -374,6 +433,6 @@ def render_trades_overview(trades: pd.DataFrame, n_assets: int) -> None:
             disp[mfe_col] = raw[mfe_col].map(lambda v: fmt_pct(v) if pd.notna(v) else "—")
     st.dataframe(disp, use_container_width=True, hide_index=True)
 
-    st.download_button("⬇️ Download all operations (CSV)",
+    st.download_button("Baixar todas as operações (CSV)",
                        data=trades.sort_values("entry_date").to_csv(index=False).encode("utf-8"),
                        file_name="all_operations.csv", mime="text/csv", key="all_ops_csv")

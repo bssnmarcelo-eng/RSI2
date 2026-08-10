@@ -75,7 +75,8 @@ def build_signal_frame(data: pd.DataFrame, config: StrategyConfig) -> pd.DataFra
     Shared by both the single-asset and the portfolio engines so the signal
     definition stays identical across modes.
     """
-    df = data[["open", "high", "low", "close"]].copy()
+    optional = [c for c in ["volume", "dividend", "split"] if c in data.columns]
+    df = data[["open", "high", "low", "close", *optional]].copy()
     df["rsi"] = indicators.rsi(df["close"], config.rsi_period)
 
     # Candle size in ATR units (range / ATR) — the candle's "ATR multiple". Always
@@ -306,6 +307,22 @@ class BacktestEngine:
                 progress(i / n)
             open_i = opens[i]
             close_i = closes[i]
+
+            # Corporate actions are opt-in because adjusted data already embeds
+            # them. Apply before this bar's orders to raw-price datasets.
+            if position is not None and cfg.apply_corporate_actions:
+                if "split" in df:
+                    ratio = float(df["split"].iat[i])
+                    if np.isfinite(ratio) and ratio > 0 and ratio != 1.0:
+                        position.shares *= ratio
+                        position.entry_price /= ratio
+                        position.signal_close /= ratio
+                        position.signal_low /= ratio
+                        position.max_high_seen /= ratio
+                if "dividend" in df:
+                    dividend = float(df["dividend"].iat[i])
+                    if np.isfinite(dividend) and dividend > 0:
+                        cash += position.shares * dividend
 
             # --- 1a. Fill scheduled EXIT at this bar's open --------------------
             if pending_exit is not None and position is not None:

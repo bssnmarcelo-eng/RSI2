@@ -25,6 +25,14 @@ def drawdown_series(equity: pd.Series) -> pd.Series:
     return equity / equity.cummax() - 1.0
 
 
+def ulcer_index(equity: pd.Series) -> float:
+    """Root-mean-square drawdown, expressed as a positive fraction."""
+    if equity.empty:
+        return 0.0
+    dd = drawdown_series(equity).clip(upper=0.0)
+    return float(np.sqrt(np.mean(np.square(dd))))
+
+
 def compute_metrics(
     equity: pd.Series,
     trades: pd.DataFrame,
@@ -63,6 +71,9 @@ def compute_metrics(
     metrics["sharpe"] = float(sharpe)
     metrics["sortino"] = float(sortino)
     metrics["max_drawdown"] = _max_drawdown(equity)
+    metrics["volatility"] = float(bar_returns.std(ddof=1) * np.sqrt(ppy)) if len(bar_returns) > 1 else 0.0
+    metrics["ulcer_index"] = ulcer_index(equity)
+    metrics["calmar"] = safe_div(cagr, abs(metrics["max_drawdown"]))
 
     # --- Trade statistics ---
     n_trades = len(trades)
@@ -105,7 +116,12 @@ def monthly_returns_table(equity: pd.Series) -> pd.DataFrame:
     """Pivot of monthly returns (rows = year, cols = month) as fractions."""
     if equity.empty:
         return pd.DataFrame()
-    monthly = equity.resample("ME").last().pct_change().dropna()
+    monthly = equity.resample("ME").last().dropna()
+    returns = monthly.pct_change()
+    # The first observed value is the available base for the partial first
+    # month; without this assignment pct_change silently discards that month.
+    returns.iloc[0] = monthly.iloc[0] / float(equity.iloc[0]) - 1.0
+    monthly = returns.dropna()
     if monthly.empty:
         return pd.DataFrame()
     table = pd.DataFrame({
@@ -120,6 +136,9 @@ def yearly_returns(equity: pd.Series) -> pd.Series:
     """Calendar-year returns as fractions."""
     if equity.empty:
         return pd.Series(dtype=float)
-    yearly = equity.resample("YE").last().pct_change().dropna()
-    yearly.index = yearly.index.year
-    return yearly
+    yearly_values = equity.resample("YE").last().dropna()
+    returns = yearly_values.pct_change()
+    returns.iloc[0] = yearly_values.iloc[0] / float(equity.iloc[0]) - 1.0
+    returns = returns.dropna()
+    returns.index = returns.index.year
+    return returns

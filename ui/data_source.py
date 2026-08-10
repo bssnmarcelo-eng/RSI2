@@ -10,10 +10,10 @@ from src.types import StrategyConfig
 
 def build_data_source_params() -> dict:
     """Render sidebar data-source widgets; return {"source", "adjustment", "frequency"}."""
-    st.sidebar.header("📡 Data Source")
+    st.sidebar.header("Fonte de dados")
     source = st.sidebar.radio(
         "Fonte de dados",
-        ["CSV upload", "Norgate Data"],
+        ["Enviar CSV", "Norgate Data"],
         index=0,
         horizontal=True,
     )

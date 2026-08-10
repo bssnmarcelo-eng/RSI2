@@ -1,11 +1,12 @@
 # RSI(2) + Candlestick Mean-Reversion Backtester
 
 A professional backtesting application for a long-only mean-reversion strategy,
-built with Python, Pandas, NumPy, Streamlit and Plotly. **Backtesting is fully
-local** — you upload your own historical OHLCV CSV; no external data is used. The
-optional **Market Screening** mode is the one exception: it pulls index
-constituents (Wikipedia) and OHLC bars (Yahoo Finance via `yfinance`) to scan for
-live signals.
+built with Python, Pandas, NumPy, Streamlit and Plotly. CSV backtests are fully
+local. Optional integrations use Yahoo Finance/Wikipedia for screening and
+Norgate Data for prices, point-in-time membership and current fundamentals.
+
+> The interface is presented in Portuguese. This README keeps established
+> quantitative terms in English where they are commonly used by practitioners.
 
 ---
 
@@ -48,7 +49,7 @@ A long **setup** is confirmed at a candle's **close** when **both** conditions h
   from Yahoo Finance via `yfinance`, and the strategy's own signal logic
   (RSI(2) + percentile hammer + ATR/price filters) is run on each ticker, so the
   screen matches the backtest exactly. Hits are listed (most oversold first) with
-  a CSV download. **This mode uses external data** (the only part of the app that
+  a CSV download. **This mode uses external data**
   does); it needs internet and the optional deps `yfinance lxml requests`.
 - **Portfolio (shared capital)** — run the same strategy across many tickers
   sharing **one capital pool** (a real portfolio, not independent backtests).
@@ -108,6 +109,26 @@ source .venv/bin/activate
 pip install -r requirements.txt
 streamlit run app.py
 ```
+
+Optional integrations:
+
+```bash
+pip install -r requirements-screening.txt  # Yahoo Finance screening
+pip install -r requirements-norgate.txt    # Windows + active Norgate subscription
+pip install -r requirements-dev.txt        # tests and lint
+```
+
+Run quality checks with `pytest` and `ruff check src ui tests app.py`.
+
+### Research safeguards added
+
+- Portfolio exits use each ticker's own bar count and close on that asset's last real bar.
+- Optimizer runs train and test independently with fresh test capital and causal warm-up.
+- Expanding-window walk-forward validation and parallel grid execution are available.
+- Calmar, Ulcer Index, annualized volatility, benchmark comparison and Monte Carlo bootstrap.
+- Optional raw-data dividends/splits and margin-interest accrual. Do not enable corporate
+  actions for adjusted or Total Return series.
+- Log retention is opt-in through `RSI2_LOG_MAX_RUNS` and `RSI2_LOG_MAX_AGE_DAYS`.
 
 Streamlit opens the app in your browser. Upload a CSV, pick a ticker and date
 range, adjust parameters in the sidebar, and click **Run Backtest**.

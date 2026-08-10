@@ -15,7 +15,7 @@ def _cached_constituents(index: str):
 
 
 def run_screening_mode() -> None:
-    st.header("🔎 Market Screening")
+    st.header("Screening de mercado")
     st.markdown(
         "Scan an index for tickers **currently firing the entry signal** on the chosen "
         "timeframe. The conditions are exactly the entry rules below — RSI(period) below "
@@ -42,7 +42,7 @@ def run_screening_mode() -> None:
                + ((f" · price ≥ {cfg.min_price:g}" if cfg.min_price > 0 else "")
                   + (f" · price ≤ {cfg.max_price:g}" if cfg.max_price > 0 else "")))
 
-    if not st.button("▶️ Run Screening", type="primary"):
+    if not st.button("Executar screening", type="primary"):
         return
 
     # Constituents (cached for a day).
@@ -59,18 +59,18 @@ def run_screening_mode() -> None:
         tickers = tickers[:int(max_tickers)]
     st.caption(f"Scanning **{len(tickers)}** tickers on **{timeframe}**…")
 
-    bar = st.progress(0.0, text="Downloading data & screening…")
+    bar = st.progress(0.0, text="Baixando dados e procurando sinais…")
     try:
         hits, scanned, errors = screener.run_screen(
             tickers, timeframe, cfg, ignore_last=ignore_last,
-            progress=lambda p: bar.progress(min(p, 1.0), text="Downloading data & screening…"))
+            progress=lambda p: bar.progress(min(p, 1.0), text="Baixando dados e procurando sinais…"))
     except ImportError:
         bar.empty()
-        st.error("`yfinance` is not installed. Run: `pip install yfinance lxml requests`.")
+        st.error("Dependências do screening ausentes. Execute `pip install -r requirements-screening.txt`.")
         return
     except Exception as exc:
         bar.empty()
-        st.error(f"Screening failed: {exc}")
+        st.error(f"Falha no screening: {exc}")
         return
     bar.empty()
 
@@ -87,7 +87,7 @@ def run_screening_mode() -> None:
     disp["body_percentile"] = hits["body_percentile"].map(lambda v: fmt_num(v, 3))
     disp["range"] = hits["range"].map(lambda v: fmt_num(v, 2))
     st.dataframe(disp, use_container_width=True, hide_index=True)
-    st.download_button("⬇️ Download screening hits (CSV)",
+    st.download_button("Baixar sinais encontrados (CSV)",
                        data=hits.to_csv(index=False).encode("utf-8"),
                        file_name=f"screening_{index.replace(' ', '_')}_{timeframe.replace(' ', '')}.csv",
                        mime="text/csv", key="screen_csv")

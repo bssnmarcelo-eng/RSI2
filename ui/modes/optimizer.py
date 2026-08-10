@@ -12,13 +12,29 @@ from ui.data_source import _resolve_norgate_pending, collect_multi_asset_data
 from ui.params_form import configuration_form
 from ui.run_logging import save_to_log
 
-
 MAX_COMBOS = 4000
+
+
+@st.cache_data(show_spinner="Executando e armazenando a otimização…", max_entries=8)
+def _cached_grid(data_by_ticker, cfg, ranges, train_frac, min_trades, workers):
+    """Reuse byte-identical optimization requests within the Streamlit session."""
+    return optimizer.run_grid(
+        data_by_ticker, cfg, ranges, train_frac=train_frac,
+        min_trades=min_trades, workers=workers,
+    )
+
+
+@st.cache_data(show_spinner="Executando e armazenando o walk-forward…", max_entries=8)
+def _cached_walk_forward(data_by_ticker, cfg, ranges, objective, folds, train_frac, min_trades):
+    return optimizer.run_walk_forward(
+        data_by_ticker, cfg, ranges, objective=objective, n_splits=folds,
+        initial_train_frac=train_frac, min_trades=min_trades,
+    )
 
 
 def build_param_ranges() -> dict:
     """UI to pick which parameters to sweep and their min/max/step ranges."""
-    st.subheader("Parameters to optimize")
+    st.subheader("Parâmetros para otimizar")
     labels = {k: v[0] for k, v in optimizer.PARAM_SPECS.items()}
     chosen = st.multiselect(
         "Variables to sweep (grid = all combinations)",
@@ -101,7 +117,7 @@ def render_optimizer_results(results: pd.DataFrame, ranges: dict, objective: str
     disp = disp.rename(columns=rename)
     st.dataframe(disp, use_container_width=True, hide_index=True)
 
-    st.download_button("⬇️ Download optimization results (CSV)",
+    st.download_button("Baixar resultados da otimização (CSV)",
                        data=ranked.to_csv(index=False).encode("utf-8"),
                        file_name="optimization_results.csv", mime="text/csv", key="opt_csv")
     return ranked
@@ -120,19 +136,31 @@ def run_optimizer_mode(note: str = "", data_src: dict | None = None):
     data_by_ticker = None if is_pending else pending
     n_assets = len(pending["symbols"]) if is_pending else len(data_by_ticker)
 
-    st.subheader("🔧 Optimization setup")
+    st.subheader("Configuração da otimização")
     ranges = build_param_ranges()
     if not ranges:
-        st.info("Select at least one parameter to sweep.")
+        st.info("Selecione ao menos um parâmetro para variar.")
         return
 
     c1, c2, c3 = st.columns(3)
-    obj_key = c1.selectbox("Objective (maximize)", list(optimizer.OBJECTIVES.keys()),
+    obj_key = c1.selectbox("Objetivo (maximizar)", list(optimizer.OBJECTIVES.keys()),
                            format_func=lambda k: optimizer.OBJECTIVES[k], index=0)
-    train_frac = c2.slider("In-sample fraction (train)", min_value=0.3, max_value=0.9,
+    train_frac = c2.slider("Fração in-sample (treino)", min_value=0.3, max_value=0.9,
                            value=0.7, step=0.05)
-    min_trades = c3.number_input("Min in-sample trades (to rank a combo)", min_value=1,
+    min_trades = c3.number_input("Mínimo de operações in-sample", min_value=1,
                                  value=10, step=1)
+    validation = st.radio(
+        "Validação", ["In-sample / out-of-sample", "Walk-forward"], horizontal=True,
+        help="Walk-forward seleciona parâmetros em janelas expansivas e avalia somente a janela seguinte.",
+    )
+    c4, c5 = st.columns(2)
+    workers = c4.number_input("Execuções paralelas", min_value=1, max_value=16, value=1, step=1)
+    folds = c5.number_input("Janelas walk-forward", min_value=2, max_value=10, value=3, step=1,
+                            disabled=not validation.startswith("Walk"))
+    use_cache = st.checkbox(
+        "Reutilizar resultados de uma execução idêntica", value=True,
+        help="O cache considera dados, configuração, faixas e método de validação.",
+    )
 
     n_combos = 1
     for vals in ranges.values():
@@ -145,7 +173,7 @@ def run_optimizer_mode(note: str = "", data_src: dict | None = None):
         st.error(f"{n_combos} combinations exceeds the cap of {MAX_COMBOS}. Reduce ranges or step count.")
         return
 
-    if not st.button("▶️ Run Optimization", type="primary"):
+    if not st.button("Executar otimização", type="primary"):
         return
 
     if is_pending:
@@ -153,10 +181,38 @@ def run_optimizer_mode(note: str = "", data_src: dict | None = None):
         if data_by_ticker is None:
             return
 
-    bar = st.progress(0.0, text="Running grid search…")
-    results, split_dt = optimizer.run_grid(
-        data_by_ticker, cfg, ranges, train_frac=float(train_frac),
-        min_trades=int(min_trades), progress=lambda p: bar.progress(p, text="Running grid search…"))
+    bar = st.progress(0.0, text="Executando otimização…")
+    if validation.startswith("Walk"):
+        if use_cache:
+            walk = _cached_walk_forward(
+                data_by_ticker, cfg, ranges, obj_key, int(folds),
+                float(train_frac), int(min_trades),
+            )
+        else:
+            walk = optimizer.run_walk_forward(
+                data_by_ticker, cfg, ranges, objective=obj_key, n_splits=int(folds),
+                initial_train_frac=float(train_frac), min_trades=int(min_trades),
+                progress=lambda p: bar.progress(p, text="Executando walk-forward…"),
+            )
+        bar.empty()
+        st.subheader("Resultados walk-forward")
+        if walk.empty:
+            st.warning("Não há dados suficientes para montar as janelas.")
+        else:
+            st.dataframe(walk, use_container_width=True, hide_index=True)
+            st.download_button("Baixar resultados walk-forward (CSV)",
+                               walk.to_csv(index=False).encode("utf-8"),
+                               file_name="walk_forward_results.csv", mime="text/csv")
+        return
+    if use_cache:
+        results, split_dt = _cached_grid(
+            data_by_ticker, cfg, ranges, float(train_frac), int(min_trades), int(workers)
+        )
+    else:
+        results, split_dt = optimizer.run_grid(
+            data_by_ticker, cfg, ranges, train_frac=float(train_frac),
+            min_trades=int(min_trades), workers=int(workers),
+            progress=lambda p: bar.progress(p, text="Executando grade…"))
     bar.empty()
     ranked = render_optimizer_results(results, ranges, obj_key, split_dt, int(min_trades))
 

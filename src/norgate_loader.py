@@ -12,7 +12,6 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 
-
 # ── labels shown in the UI ────────────────────────────────────────────────────
 
 ADJ_LABELS: List[str] = [
@@ -49,11 +48,11 @@ def _nd():
     try:
         import norgatedata  # noqa: PLC0415
         return norgatedata
-    except ImportError:
+    except ImportError as exc:
         raise ImportError(
             "Pacote 'norgatedata' não encontrado. "
             "Instale com:  pip install norgatedata"
-        )
+        ) from exc
 
 
 # ── availability ──────────────────────────────────────────────────────────────

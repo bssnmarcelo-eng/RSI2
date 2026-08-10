@@ -5,8 +5,6 @@ so feeding it into the engine cannot introduce look-ahead bias.
 """
 from __future__ import annotations
 
-from typing import Dict
-
 import numpy as np
 import pandas as pd
 
@@ -29,15 +27,15 @@ def detect_hammer(df: pd.DataFrame, params: HammerParams) -> pd.Series:
 
     Both open and close sitting near the high implies a long lower shadow.
     """
-    o, h, l, c = df["open"], df["high"], df["low"], df["close"]
-    total_range = h - l
+    o, h, low, c = df["open"], df["high"], df["low"], df["close"]
+    total_range = h - low
     threshold = h - params.percentile * total_range
 
     cond = (total_range > 0) & (o > threshold) & (c > threshold)
     if params.require_bullish_close:
         cond &= c >= o
     if params.use_atr_filter:
-        atr_series = atr(h, l, c, params.atr_period)
+        atr_series = atr(h, low, c, params.atr_period)
         cond &= total_range > (params.atr_multiple * atr_series)
     return cond.fillna(False)
 

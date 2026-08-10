@@ -143,7 +143,7 @@ def run_fundamentals_mode() -> None:
             st.markdown("**Resumo do negócio**")
             st.write(ov["business_summary"])
 
-    for tab, (cat_title, cat_help, cat_fields) in zip(tabs[1:], F.CATALOG):
+    for tab, (_cat_title, cat_help, cat_fields) in zip(tabs[1:], F.CATALOG, strict=True):
         with tab:
             st.caption(cat_help)
             tbl = _category_table(cat_fields, values)

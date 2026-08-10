@@ -1,0 +1,3 @@
+-r requirements.txt
+# Requer Windows, assinatura ativa e Norgate Data Updater em execução.
+norgatedata>=1.0.74

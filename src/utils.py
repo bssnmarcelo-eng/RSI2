@@ -26,6 +26,17 @@ def commission_for(costs: CostConfig, shares: float, notional: float) -> float:
     return costs.commission_fixed + costs.commission_pct * notional
 
 
+def financing_cost(costs: CostConfig, borrowed_cash: float, short_notional: float, days: float) -> float:
+    """Accrued margin interest and stock-borrow fee over calendar days."""
+    if days <= 0:
+        return 0.0
+    year_fraction = days / 365.25
+    return (
+        max(float(borrowed_cash), 0.0) * max(costs.annual_margin_rate, 0.0)
+        + max(float(short_notional), 0.0) * max(costs.annual_borrow_fee, 0.0)
+    ) * year_fraction
+
+
 def safe_div(numerator: float, denominator: float, default: float = 0.0) -> float:
     """Divide, returning ``default`` instead of raising/inf on a zero denominator."""
     if denominator is None or denominator == 0 or pd.isna(denominator):

@@ -22,6 +22,8 @@ _COLUMN_ALIASES = {
     "close": {"close", "c", "last"},
     "adj_close": {"adj_close", "adjclose", "adjusted_close", "adjusted", "adjustedclose"},
     "volume": {"volume", "vol", "v"},
+    "dividend": {"dividend", "dividends", "cash_dividend"},
+    "split": {"split", "split_ratio", "stock_split", "splits"},
 }
 
 REQUIRED_COLUMNS = ["date", "open", "high", "low", "close"]
@@ -78,19 +80,26 @@ def read_csv(file) -> pd.DataFrame:
 
 
 def _coerce_numeric(series: pd.Series) -> pd.Series:
-    """Coerce a column to float, tolerating decimal commas and thousands dots.
+    """Coerce a column to float, tolerating US and European separators.
 
     Examples handled: "32,8145" -> 32.8145, "1.234,56" -> 1234.56,
-    "186290400" -> 186290400.0. Anything unparseable becomes NaN.
+    "1,234.56" -> 1234.56, "186290400" -> 186290400.0.  When both
+    separators occur, the rightmost one is the decimal separator. Anything
+    unparseable becomes NaN.
     """
     if series.dtype.kind in "biufc":
         return series.astype(float)
-    s = series.astype(str).str.strip()
-    # When a value contains BOTH separators, the dot is a thousands separator.
+    s = series.astype(str).str.strip().str.replace("\u00a0", "", regex=False)
+    s = s.str.replace(" ", "", regex=False)
     both = s.str.contains(",", regex=False) & s.str.contains(".", regex=False)
-    s = s.mask(both, s.str.replace(".", "", regex=False))
-    # Decimal comma -> decimal point.
-    s = s.str.replace(",", ".", regex=False)
+    comma_decimal = both & (s.str.rfind(",") > s.str.rfind("."))
+    dot_decimal = both & ~comma_decimal
+
+    european = s.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
+    american = s.str.replace(",", "", regex=False)
+    s = s.mask(comma_decimal, european).mask(dot_decimal, american)
+    # A lone comma is treated as decimal, preserving decimal-comma exports.
+    s = s.mask(~both, s.str.replace(",", ".", regex=False))
     return pd.to_numeric(s, errors="coerce")
 
 
@@ -216,7 +225,9 @@ def prepare(
         warnings.append(f"Dropped {n_bad_dates} row(s) with unparseable dates.")
         out = out.dropna(subset=["date"])
 
-    # --- Chronological sort ---
+    # --- Chronology / sampling diagnostics ---
+    if not out["date"].is_monotonic_increasing:
+        warnings.append("Input dates were out of chronological order and were sorted.")
     out = out.sort_values("date")
 
     # --- Duplicate dates ---
@@ -226,10 +237,24 @@ def prepare(
         warnings.append(f"Removed {n_dups} duplicate date row(s) (kept first occurrence).")
         out = out[~dup_mask]
 
+    deltas = out["date"].diff().dropna()
+    if len(deltas) >= 2:
+        median_delta = deltas.median()
+        if median_delta > pd.Timedelta(0):
+            large_gaps = deltas > median_delta * 10
+            if large_gaps.any():
+                warnings.append(
+                    f"Found {int(large_gaps.sum())} unusually large date gap(s) "
+                    f"relative to the typical {median_delta} sampling interval."
+                )
+
     # --- Numeric coercion ---
-    numeric_cols = [c for c in ["open", "high", "low", "close", "adj_close", "volume"] if c in out.columns]
+    numeric_cols = [c for c in ["open", "high", "low", "close", "adj_close", "volume", "dividend", "split"] if c in out.columns]
     for col in numeric_cols:
         out[col] = _coerce_numeric(out[col])
+    for col in ["dividend", "split"]:
+        if col in out:
+            out[col] = out[col].fillna(0.0)
 
     # --- Drop rows with missing/invalid OHLC ---
     before = len(out)
@@ -239,11 +264,25 @@ def prepare(
     if dropped:
         warnings.append(f"Dropped {dropped} row(s) with missing or non-positive OHLC values.")
 
-    # --- Basic sanity: high should be >= low ---
-    bad_hl = int((out["high"] < out["low"]).sum())
-    if bad_hl:
-        warnings.append(f"Found {bad_hl} row(s) where high < low; these were removed.")
-        out = out[out["high"] >= out["low"]]
+    # --- OHLC topology: high/low must contain both open and close ---
+    bad_hl = out["high"] < out["low"]
+    bad_high = out["high"] < out[["open", "close"]].max(axis=1)
+    bad_low = out["low"] > out[["open", "close"]].min(axis=1)
+    invalid_ohlc = bad_hl | bad_high | bad_low
+    n_invalid_ohlc = int(invalid_ohlc.sum())
+    if n_invalid_ohlc:
+        details = []
+        if bad_hl.any():
+            details.append(f"high < low: {int(bad_hl.sum())}")
+        if bad_high.any():
+            details.append(f"high below open/close: {int(bad_high.sum())}")
+        if bad_low.any():
+            details.append(f"low above open/close: {int(bad_low.sum())}")
+        warnings.append(
+            f"Removed {n_invalid_ohlc} row(s) with inconsistent OHLC values "
+            f"({'; '.join(details)})."
+        )
+        out = out[~invalid_ohlc]
 
     # --- Date range filtering ---
     if start is not None:

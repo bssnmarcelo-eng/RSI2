@@ -8,21 +8,21 @@ from src import logger
 
 
 def run_log_mode() -> None:
-    st.header("📁 Backtest Log")
+    st.header("Histórico de backtests")
     runs = logger.load_runs_index()
     if runs.empty:
-        st.info("No runs logged yet. Run a backtest in any mode — each run is saved here "
+        st.info("Ainda não há execuções salvas. Execute um backtest; cada resultado será salvo aqui "
                 "automatically (results, metrics and tables).")
         return
 
     runs_sorted = runs.sort_values("timestamp", ascending=False).reset_index(drop=True)
     st.caption(f"**{len(runs_sorted)}** run(s) saved at `{logger.LOG_DIR}`.")
     st.dataframe(runs_sorted, use_container_width=True, hide_index=True)
-    st.download_button("⬇️ Download runs index (CSV)", data=runs.to_csv(index=False).encode("utf-8"),
+    st.download_button("Baixar índice das execuções (CSV)", data=runs.to_csv(index=False).encode("utf-8"),
                        file_name="runs.csv", mime="text/csv", key="runs_index_csv")
 
     st.subheader("🔎 Inspect a run")
-    sel = st.selectbox("Run", runs_sorted["run_id"].astype(str).tolist())
+    sel = st.selectbox("Execução", runs_sorted["run_id"].astype(str).tolist())
     summ = logger.load_summary(sel)
     if summ:
         with st.expander("Config + metrics (summary.json)", expanded=False):
@@ -32,7 +32,7 @@ def run_log_mode() -> None:
         try:
             df = pd.read_csv(path)
             st.dataframe(df, use_container_width=True, hide_index=True)
-            st.download_button(f"⬇️ Download {name}.csv",
+            st.download_button(f"Baixar {name}.csv",
                                data=df.to_csv(index=False).encode("utf-8"),
                                file_name=f"{sel}_{name}.csv", mime="text/csv",
                                key=f"dl_{sel}_{name}")
@@ -43,4 +43,4 @@ def run_log_mode() -> None:
     confirm = st.checkbox("I understand this permanently deletes ALL saved runs")
     if st.button("Delete entire backtest log", disabled=not confirm):
         logger.clear_log()
-        st.success("Backtest log cleared. Reload the page to refresh.")
+        st.success("Histórico removido. Recarregue a página para atualizar.")

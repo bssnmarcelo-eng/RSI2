@@ -25,7 +25,7 @@ def _render_portfolio_results() -> None:
     if meta:
         st.caption(f"Resultados de **{meta['n_assets']}** ativos "
                    f"({meta['start']} → {meta['end']}).")
-    tab_sum, tab_charts, tab_log = st.tabs(["📊 Resumo", "📈 Gráficos & Ativos", "📒 Trade Log"])
+    tab_sum, tab_charts, tab_log = st.tabs(["Resumo", "Gráficos e ativos", "Operações"])
     with tab_sum:
         render_portfolio_metrics(st.session_state["_portfolio_metrics"], res)
     with tab_charts:
@@ -42,7 +42,7 @@ def run_portfolio_mode(note: str = "", data_src: dict | None = None):
     _pf_sig = None
     with data_box:
         st.subheader("📥 Dados")
-        pending = collect_multi_asset_data(cfg, "Tickers in the portfolio", data_src)
+        pending = collect_multi_asset_data(cfg, "Ativos da carteira", data_src)
         is_pending = isinstance(pending, dict) and pending.get("_pending")
         if pending is not None and not is_pending:
             data_by_ticker = pending
@@ -52,7 +52,7 @@ def run_portfolio_mode(note: str = "", data_src: dict | None = None):
                 sizing_txt = "**100%**/trade · **unlimited** buying power"
             else:
                 sizing_txt = f"**{pconf.pct_per_trade:g}%**/trade · **{pconf.leverage:g}×** leverage"
-            st.caption(f"Portfolio of **{len(data_by_ticker)}** assets · "
+            st.caption(f"Carteira com **{len(data_by_ticker)}** ativos · "
                        f"capital **{fmt_money(pconf.initial_capital, 0)}** · {sizing_txt} · "
                        f"{total_bars:,} candle-rows.")
         elif is_pending:

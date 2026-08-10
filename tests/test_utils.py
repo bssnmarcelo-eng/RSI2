@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from src.types import CommissionModel, CostConfig
-from src.utils import commission_for, periods_per_year, safe_div
+from src.utils import commission_for, financing_cost, periods_per_year, safe_div
 
 
 def test_generic_commission_fixed_plus_pct():
@@ -51,3 +51,8 @@ def test_periods_per_year_daily_is_reasonable():
     ppy = periods_per_year(idx)
     # ~365 calendar-day bars per year.
     assert 350 < ppy < 380
+
+
+def test_financing_cost_combines_margin_and_short_borrow():
+    costs = CostConfig(annual_margin_rate=0.10, annual_borrow_fee=0.05)
+    assert financing_cost(costs, 1_000.0, 2_000.0, 365.25) == pytest.approx(200.0)

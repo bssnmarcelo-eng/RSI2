@@ -32,7 +32,7 @@ import pandas as pd
 
 from .backtest_engine import add_period_mfe, build_signal_frame
 from .types import Execution, PortfolioConfig, PortfolioSizing, StrategyConfig, Trade
-from .utils import commission_for
+from .utils import commission_for, financing_cost
 
 
 @dataclass
@@ -72,6 +72,8 @@ class PortfolioResult:
     avg_positions: float              # mean number of open positions
     max_concurrent: int               # peak simultaneous positions
     warnings: List[str]
+    financing_costs: float = 0.0
+    dividend_income: float = 0.0
 
 
 class PortfolioEngine:
@@ -104,10 +106,15 @@ class PortfolioEngine:
         cfg = self.config.exits
         close = arr["close"][i]
         rsi_val = arr["rsi"][i]
-        bars_held = i - pos.entry_index
+        local_i = int(arr["bar_number"][i])
+        bars_held = local_i - pos.entry_index
 
         if cfg.use_rsi_exit and not np.isnan(rsi_val) and rsi_val > cfg.rsi_exit_threshold:
             return f"RSI > {cfg.rsi_exit_threshold:g}"
+        if cfg.use_rsi_cum_exit:
+            rsi_cum_val = arr["rsi_cum"][i]
+            if not np.isnan(rsi_cum_val) and rsi_cum_val > cfg.rsi_cum_threshold:
+                return f"RSI({cfg.rsi_cum_periods}) acum > {cfg.rsi_cum_threshold:g}"
         if cfg.use_max_bars and bars_held >= cfg.max_bars:
             return f"Time stop ({cfg.max_bars} bars)"
         if cfg.use_profit_target and close >= pos.entry_price * (1.0 + cfg.profit_target_pct / 100.0):
@@ -121,7 +128,7 @@ class PortfolioEngine:
         return None
 
     # ----------------------------------------------------------------- helpers
-    def _close_position(self, pos: _Position, exit_raw: float, i: int, date,
+    def _close_position(self, pos: _Position, exit_raw: float, local_i: int, date,
                         reason: str, cash: float) -> tuple:
         """Sell ``pos`` at ``exit_raw`` (pre-slippage). Returns (cash, Trade)."""
         exec_price = self._sell_price(exit_raw)
@@ -153,7 +160,7 @@ class PortfolioEngine:
             exit_date=date,
             exit_price=exec_price,
             exit_reason=reason,
-            bars_held=i - pos.entry_index,
+            bars_held=local_i - pos.entry_index,
             gross_return=gross_return,
             net_return=net_return,
             pnl=net_pnl,
@@ -179,6 +186,9 @@ class PortfolioEngine:
         arr: Dict[str, dict] = {}
         for t, f in frames.items():
             close = f["close"].reindex(union)
+            has_bar = union.isin(f.index)
+            bar_number = np.full(n, -1, dtype=int)
+            bar_number[has_bar] = np.arange(len(f), dtype=int)
             arr[t] = {
                 "open": f["open"].reindex(union).to_numpy(dtype=float),
                 "high": f["high"].reindex(union).to_numpy(dtype=float),
@@ -186,11 +196,18 @@ class PortfolioEngine:
                 "close": close.to_numpy(dtype=float),
                 "mark": close.ffill().to_numpy(dtype=float),   # for equity marking
                 "rsi": f["rsi"].reindex(union).to_numpy(dtype=float),
+                "rsi_cum": f["rsi_cum"].reindex(union).to_numpy(dtype=float),
                 "sma": f["sma_exit"].reindex(union).to_numpy(dtype=float),
                 "atr_mult": f["atr_mult"].reindex(union).to_numpy(dtype=float),
                 "signal": f["entry_signal"].reindex(union).fillna(False).to_numpy(dtype=bool),
                 "pattern": f["pattern"].reindex(union).fillna("").to_numpy(dtype=object),
-                "has_bar": union.isin(f.index),
+                "dividend": (f["dividend"].reindex(union).fillna(0.0).to_numpy(dtype=float)
+                             if "dividend" in f else np.zeros(n, dtype=float)),
+                "split": (f["split"].reindex(union).fillna(0.0).to_numpy(dtype=float)
+                          if "split" in f else np.zeros(n, dtype=float)),
+                "has_bar": has_bar,
+                "bar_number": bar_number,
+                "last_bar": int(np.flatnonzero(has_bar)[-1]),
             }
 
         cash = float(pf.initial_capital)
@@ -203,6 +220,9 @@ class PortfolioEngine:
         equity = np.empty(n, dtype=float)
         n_open = np.zeros(n, dtype=int)
         gross_exposure = np.zeros(n, dtype=float)
+        end_of_data_closes = 0
+        total_financing = 0.0
+        total_dividends = 0.0
 
         # marks_prev[t] = ticker's most recent close strictly before today.
         marks_prev = {t: np.nan for t in tickers}
@@ -224,11 +244,41 @@ class PortfolioEngine:
                 progress(i / n)
             date = union[i]
 
+            # Financing accrues on negative cash between portfolio calendar
+            # observations. Stock-borrow fees remain zero for this long-only engine.
+            if i > 0 and cash < 0:
+                days = max((date - union[i - 1]).total_seconds() / 86_400.0, 0.0)
+                charge = financing_cost(cfg.costs, -cash, 0.0, days)
+                cash -= charge
+                total_financing += charge
+
+            # Raw-price CSVs may provide explicit cash dividends and split ratios.
+            # This is opt-in to avoid double-counting adjusted/Total Return data.
+            if cfg.apply_corporate_actions:
+                for t, pos in list(positions.items()):
+                    if not arr[t]["has_bar"][i]:
+                        continue
+                    ratio = float(arr[t]["split"][i])
+                    if np.isfinite(ratio) and ratio > 0 and ratio != 1.0:
+                        pos.shares *= ratio
+                        pos.entry_price /= ratio
+                        pos.signal_close /= ratio
+                        pos.signal_low /= ratio
+                        pos.max_high_seen /= ratio
+                        if not np.isnan(marks_prev[t]):
+                            marks_prev[t] /= ratio
+                    dividend = float(arr[t]["dividend"][i])
+                    if np.isfinite(dividend) and dividend > 0:
+                        income = pos.shares * dividend
+                        cash += income
+                        total_dividends += income
+
             # --- 1. Fill scheduled EXITS at this bar's open ---------------------
             for t in list(pending_exits.keys()):
                 if t in positions and arr[t]["has_bar"][i]:
                     cash, trade = self._close_position(
-                        positions[t], arr[t]["open"][i], i, date, pending_exits[t], cash
+                        positions[t], arr[t]["open"][i], int(arr[t]["bar_number"][i]),
+                        date, pending_exits[t], cash
                     )
                     trades.append(trade)
                     trade_bar.append(i)
@@ -258,7 +308,8 @@ class PortfolioEngine:
                 for t, pos in list(positions.items()):
                     if not arr[t]["has_bar"][i] or t in pending_exits:
                         continue
-                    if pos.entered_at_close and pos.entry_index == i:
+                    if (pos.entered_at_close
+                            and pos.entry_index == int(arr[t]["bar_number"][i])):
                         continue  # no post-entry low on a same-bar close entry
                     stop = pos.signal_low
                     low_i = arr[t]["low"][i]
@@ -267,7 +318,8 @@ class PortfolioEngine:
                     open_i = arr[t]["open"][i]
                     fill_raw = open_i if (not np.isnan(open_i) and open_i < stop) else stop
                     cash, trade = self._close_position(
-                        pos, fill_raw, i, date, "Signal-low stop", cash
+                        pos, fill_raw, int(arr[t]["bar_number"][i]), date,
+                        "Signal-low stop", cash
                     )
                     trades.append(trade)
                     trade_bar.append(i)
@@ -277,14 +329,16 @@ class PortfolioEngine:
             for t, pos in list(positions.items()):
                 if not arr[t]["has_bar"][i] or t in pending_exits:
                     continue
-                if pos.entered_at_close and pos.entry_index == i:
+                if (pos.entered_at_close
+                        and pos.entry_index == int(arr[t]["bar_number"][i])):
                     continue  # can't exit the same close we entered on
                 reason = self._exit_reason(pos, i, arr[t])
                 if reason is None:
                     continue
                 if cfg.exit_execution == Execution.SIGNAL_CLOSE:
                     cash, trade = self._close_position(
-                        pos, arr[t]["close"][i], i, date, reason, cash
+                        pos, arr[t]["close"][i], int(arr[t]["bar_number"][i]),
+                        date, reason, cash
                     )
                     trades.append(trade)
                     trade_bar.append(i)
@@ -329,6 +383,27 @@ class PortfolioEngine:
                     positions=positions, unlimited=unlimited,
                 )
 
+            # A delisted/short-history asset must not remain marked at a stale
+            # close until some other ticker's final date. Liquidate it on its own
+            # final real candle, exactly as the single-asset engine does.
+            for t, pos in list(positions.items()):
+                if i != arr[t]["last_bar"]:
+                    continue
+                local_i = int(arr[t]["bar_number"][i])
+                if not (pos.entered_at_close and pos.entry_index == local_i):
+                    high_i = arr[t]["high"][i]
+                    if not np.isnan(high_i):
+                        pos.max_high_seen = max(pos.max_high_seen, float(high_i))
+                cash, trade = self._close_position(
+                    pos, arr[t]["close"][i], local_i,
+                    date, "End of data", cash,
+                )
+                trades.append(trade)
+                trade_bar.append(i)
+                del positions[t]
+                pending_exits.pop(t, None)
+                end_of_data_closes += 1
+
             # --- 5. Mark-to-market the whole portfolio at this bar's close ------
             long_now = 0.0
             for t, p in positions.items():
@@ -338,7 +413,8 @@ class PortfolioEngine:
                     marks_prev[t] = mk  # roll forward last known close
                 # Track peak high for MFE (skip entry bar for SIGNAL_CLOSE entries).
                 if arr[t]["has_bar"][i]:
-                    if not (p.entered_at_close and p.entry_index == i):
+                    local_i = int(arr[t]["bar_number"][i])
+                    if not (p.entered_at_close and p.entry_index == local_i):
                         high_i = arr[t]["high"][i]
                         if not np.isnan(high_i):
                             p.max_high_seen = max(p.max_high_seen, float(high_i))
@@ -356,17 +432,25 @@ class PortfolioEngine:
         # --- Force-close anything still open at the final bar -------------------
         if positions:
             last = n - 1
+            forced_count = len(positions)
             for t, pos in list(positions.items()):
+                local_i = int(arr[t]["bar_number"][last])
                 cash, trade = self._close_position(
-                    pos, arr[t]["mark"][last], last, union[last], "End of data", cash
+                    pos, arr[t]["mark"][last], local_i, union[last], "End of data", cash
                 )
                 trade.equity_after = cash
                 trades.append(trade)
+                del positions[t]
             equity[last] = cash
             n_open[last] = 0
+            gross_exposure[last] = 0.0
+            end_of_data_closes += forced_count
+
+        if end_of_data_closes:
             self.warnings.append(
-                f"{len(positions)} position(s) were still open at the end of the data and "
-                "were closed at the final candle's close for accounting purposes."
+                f"{end_of_data_closes} position(s) were still open at the end of the "
+                "data available for their asset and were closed at that asset's final candle close for "
+                "accounting purposes."
             )
 
         equity_series = pd.Series(equity, index=union, name="equity")
@@ -394,6 +478,8 @@ class PortfolioEngine:
             avg_positions=float(n_open.mean()) if n else 0.0,
             max_concurrent=int(n_open.max()) if n else 0,
             warnings=self.warnings,
+            financing_costs=total_financing,
+            dividend_income=total_dividends,
         )
 
     # ---------------------------------------------------------- entry filling
@@ -442,24 +528,36 @@ class PortfolioEngine:
                 break
             if notional_target <= 0:
                 break  # no equity left to deploy (e.g. ruin under unlimited margin)
-            # PERCENT mode only: respect the buying-power ceiling.
-            if not full_equity and (long_value + notional_target) > buying_power + 1e-9:
-                continue  # not enough buying power for this name -> skip (missed)
-
             shares = notional_target / price
             if not pf.allow_fractional:
                 shares = float(np.floor(shares))
+            # PERCENT mode: notional *plus entry commission* consumes buying
+            # power. This also prevents a 1x/cash portfolio from borrowing just
+            # enough to pay fees. Scale down instead of needlessly missing the
+            # signal when fractional (or fewer whole) shares fit.
+            if not full_equity:
+                capacity = buying_power - long_value
+                for _ in range(5):
+                    notional = shares * price
+                    total_cost = notional + self._commission(shares, notional)
+                    if total_cost <= capacity + 1e-9:
+                        break
+                    shares *= capacity / total_cost if total_cost > 0 and capacity > 0 else 0.0
+                    if not pf.allow_fractional:
+                        shares = float(np.floor(shares))
             if shares <= 0:
                 continue
             notional = shares * price
             commission = self._commission(shares, notional)
+            if not full_equity and notional + commission > capacity + 1e-9:
+                continue
             cash -= notional + commission
-            long_value += notional
+            long_value += notional + commission
             positions[t] = _Position(
                 ticker=t,
                 shares=shares,
                 entry_price=price,
-                entry_index=i,
+                entry_index=int(arr[t]["bar_number"][i]),
                 entry_date=date,
                 entry_commission=commission,
                 signal_date=meta["signal_date"],

@@ -1,3 +1,5 @@
 # Development / testing dependencies (not needed to run the app).
 # Install with:  python -m pip install -r requirements-dev.txt
 pytest>=8.0
+pytest-cov>=5.0
+ruff>=0.6

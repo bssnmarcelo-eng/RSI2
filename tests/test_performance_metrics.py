@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from src.performance_metrics import compute_metrics
+from src.performance_metrics import compute_metrics, monthly_returns_table, yearly_returns
 
 _TRADE_COLS = ["net_return", "pnl", "bars_held"]
 
@@ -51,3 +51,23 @@ def test_total_return_and_exposure():
     assert m["win_rate"] == pytest.approx(0.5)
     # exposure = bars in market (2 + 1) / 5 bars.
     assert m["exposure"] == pytest.approx(3 / 5)
+
+
+def test_monthly_returns_include_partial_first_month_from_available_base():
+    equity = pd.Series(
+        [100.0, 110.0, 121.0],
+        index=pd.to_datetime(["2024-01-15", "2024-01-31", "2024-02-29"]),
+    )
+    table = monthly_returns_table(equity)
+    assert table.loc[2024, 1] == pytest.approx(0.10)
+    assert table.loc[2024, 2] == pytest.approx(0.10)
+
+
+def test_yearly_returns_include_partial_first_year_from_available_base():
+    equity = pd.Series(
+        [100.0, 120.0, 150.0],
+        index=pd.to_datetime(["2023-07-01", "2023-12-31", "2024-12-31"]),
+    )
+    returns = yearly_returns(equity)
+    assert returns.loc[2023] == pytest.approx(0.20)
+    assert returns.loc[2024] == pytest.approx(0.25)

@@ -2,9 +2,15 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+.test_deps/
+.tools-venv/
+.pytest_cache/
+.coverage
 venv/
 env/
 .env
 .DS_Store
 Thumbs.db
 *.log
+logs/*
+!logs/.gitkeep

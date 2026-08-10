@@ -1,0 +1,64 @@
+"use client";
+
+import { useState } from "react";
+import { Check, ChevronLeft, ChevronRight, CircleAlert, Download, Play, Save, ShieldCheck } from "lucide-react";
+import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import { EquityChart } from "@/components/product/equity-chart";
+import { MetricCard } from "@/components/product/metric-card";
+import { trades } from "@/lib/demo-data";
+
+const steps = ["Universo", "Estratégia", "Custos e sizing", "Revisão"];
+
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return <div className="space-y-2"><Label>{label}</Label>{children}{hint ? <p className="text-xs leading-5 text-muted-foreground">{hint}</p> : null}</div>;
+}
+
+export function BacktestWorkbench() {
+  const [step, setStep] = useState(0);
+  const [mode, setMode] = useState("portfolio");
+  const [running, setRunning] = useState(false);
+  const [done, setDone] = useState(false);
+
+  function run() {
+    setRunning(true);
+    window.setTimeout(() => { setRunning(false); setDone(true); toast.success("Backtest concluído e salvo no histórico."); }, 1100);
+  }
+
+  if (done) return <BacktestResult onNew={() => { setDone(false); setStep(0); }} />;
+
+  return <div>
+    <Tabs value={mode} onValueChange={setMode} className="mb-6"><TabsList><TabsTrigger value="portfolio">Carteira</TabsTrigger><TabsTrigger value="asset">Por ativo</TabsTrigger></TabsList></Tabs>
+    <Card className="shadow-none">
+      <CardHeader className="border-b"><div className="grid grid-cols-4 gap-2" aria-label={`Etapa ${step + 1} de 4: ${steps[step]}`}>{steps.map((label,index)=><button key={label} onClick={()=>setStep(index)} className="group min-h-14 text-left" aria-current={index===step?"step":undefined}><span className={`mb-2 block h-1 rounded-full ${index<=step?"bg-primary":"bg-muted"}`} /><span className={`hidden text-xs md:block ${index===step?"font-medium":"text-muted-foreground"}`}>{index<step?<Check className="mr-1 inline size-3.5"/>:null}{index+1}. {label}</span><span className="sr-only md:hidden">{label}</span></button>)}</div></CardHeader>
+      <CardContent className="p-5 md:p-8">
+        {step===0?<UniverseStep mode={mode}/>:null}
+        {step===1?<StrategyStep/>:null}
+        {step===2?<CostsStep/>:null}
+        {step===3?<ReviewStep mode={mode}/>:null}
+        {running?<div className="mt-8 rounded-xl border bg-muted/40 p-5" role="status"><div className="mb-3 flex justify-between text-sm"><span>Calculando operações e métricas…</span><span className="metric-number">78%</span></div><Progress value={78}/><p className="mt-2 text-xs text-muted-foreground">Executando 1.842 barras · etapa 3 de 4</p></div>:null}
+        <div className="mt-8 flex flex-col-reverse gap-3 border-t pt-5 sm:flex-row sm:justify-between"><Button variant="outline" onClick={()=>setStep(Math.max(0,step-1))} disabled={step===0||running}><ChevronLeft className="size-4"/>Voltar</Button>{step<3?<Button onClick={()=>setStep(step+1)}>Continuar<ChevronRight className="size-4"/></Button>:<Button onClick={run} disabled={running}><Play className="size-4"/>{running?"Executando…":"Executar backtest"}</Button>}</div>
+      </CardContent>
+    </Card>
+  </div>;
+}
+
+function UniverseStep({mode}:{mode:string}) { return <div><h2 className="text-xl font-medium">Defina o universo e o período</h2><p className="mt-2 text-sm text-muted-foreground">Os dados são validados antes da simulação; preços ajustados evitam distorções por proventos.</p><div className="mt-6 grid gap-5 md:grid-cols-2"><Field label="Fonte de dados" hint="Norgate é recomendado para universos históricos sem viés de sobrevivência."><Select defaultValue="norgate"><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="norgate">Norgate Data</SelectItem><SelectItem value="csv">Arquivos CSV</SelectItem><SelectItem value="demo">Amostra demonstrativa</SelectItem></SelectContent></Select></Field><Field label={mode==="portfolio"?"Universo":"Ativos"}><Input defaultValue={mode==="portfolio"?"Ibovespa histórico":"PETR4, VALE3, WEGE3"} aria-describedby="ticker-hint"/><p id="ticker-hint" className="text-xs text-muted-foreground">Separe tickers por vírgula ou selecione um universo.</p></Field><Field label="Data inicial"><Input type="date" defaultValue="2021-01-04"/></Field><Field label="Data final"><Input type="date" defaultValue="2026-07-31"/></Field></div><div className="mt-6 flex items-start gap-3 rounded-xl border border-success/30 bg-success/5 p-4 text-sm"><ShieldCheck className="mt-0.5 size-5 shrink-0 text-success"/><div><strong>Dados prontos</strong><p className="mt-1 text-muted-foreground">127 ativos · 1.842 pregões · OHLC válido · 3 gaps documentados</p></div></div></div>; }
+
+function StrategyStep() { return <div><h2 className="text-xl font-medium">Configure as regras da estratégia</h2><p className="mt-2 text-sm text-muted-foreground">O preset RSI2 clássico compra sobrevenda abaixo da média e vende na recuperação.</p><div className="mt-6 grid gap-5 md:grid-cols-2"><Field label="Preset"><Select defaultValue="classic"><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="classic">RSI2 clássico</SelectItem><SelectItem value="conservative">RSI2 conservador</SelectItem><SelectItem value="custom">Personalizado</SelectItem></SelectContent></Select></Field><Field label="Período do RSI"><Input type="number" defaultValue="2" min="2" max="30"/></Field><Field label="Entrada: RSI abaixo de"><Input type="number" defaultValue="10" min="0" max="100"/></Field><Field label="Saída: RSI acumulado acima de"><Input type="number" defaultValue="70" min="0" max="100"/></Field><Field label="Média de tendência"><Input type="number" defaultValue="200" min="2"/></Field><Field label="Máximo de barras na posição"><Input type="number" defaultValue="7" min="1"/></Field></div><div className="mt-6 flex items-center justify-between rounded-xl border p-4"><div><Label htmlFor="trend-filter">Exigir preço acima da média</Label><p className="mt-1 text-xs text-muted-foreground">Evita entradas contra a tendência estrutural.</p></div><Switch id="trend-filter" defaultChecked/></div></div>; }
+
+function CostsStep() { return <div><h2 className="text-xl font-medium">Modele capital, custos e risco</h2><p className="mt-2 text-sm text-muted-foreground">Custos são debitados do poder de compra e do resultado de cada operação.</p><div className="mt-6 grid gap-5 md:grid-cols-2"><Field label="Capital inicial"><Input type="number" defaultValue="100000"/></Field><Field label="Máximo de posições"><Input type="number" defaultValue="10"/></Field><Field label="Alocação por posição"><Input type="number" defaultValue="10"/><p className="text-xs text-muted-foreground">Percentual do patrimônio disponível.</p></Field><Field label="Corretagem fixa (R$)"><Input type="number" defaultValue="0" step="0.01"/></Field><Field label="Slippage por ordem (%)"><Input type="number" defaultValue="0.10" step="0.01"/></Field><Field label="Custo variável (%)"><Input type="number" defaultValue="0.03" step="0.01"/></Field></div><div className="mt-6 flex items-center justify-between rounded-xl border p-4"><div><Label htmlFor="fractional">Permitir quantidades fracionárias</Label><p className="mt-1 text-xs text-muted-foreground">Útil para mercados e classes de ativos sem lote padrão.</p></div><Switch id="fractional"/></div></div>; }
+
+function ReviewStep({mode}:{mode:string}) { return <div><div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"><div><h2 className="text-xl font-medium">Revise antes de executar</h2><p className="mt-2 text-sm text-muted-foreground">Esta configuração será registrada junto ao resultado.</p></div><Badge variant="secondary">{mode==="portfolio"?"Carteira":"Por ativo"}</Badge></div><div className="mt-6 grid gap-4 md:grid-cols-2">{[["Universo","Ibovespa histórico · 127 ativos"],["Período","04/01/2021 a 31/07/2026"],["Entrada","RSI(2) < 10 e preço > MM(200)"],["Saída","RSI acumulado > 70 ou 7 barras"],["Capital e sizing","R$ 100 mil · 10% · máx. 10 posições"],["Custos","0,10% slippage · 0,03% variável"]].map(([label,value])=><div key={label} className="rounded-xl border bg-muted/25 p-4"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 text-sm font-medium">{value}</p></div>)}</div><div className="mt-5 grid gap-2"><Label htmlFor="note">Nota da execução</Label><Textarea id="note" placeholder="Hipótese, contexto ou decisão que você quer lembrar…"/></div><div className="mt-5 flex gap-3 rounded-xl border border-warning/30 bg-warning/5 p-4 text-sm"><CircleAlert className="size-5 shrink-0 text-warning"/><p><strong>Risco de pesquisa:</strong> resultados históricos não garantem desempenho futuro. Revise viés de sobrevivência, liquidez e custos.</p></div></div>; }
+
+function BacktestResult({onNew}:{onNew:()=>void}) { return <div><div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"><div><div className="flex items-center gap-2"><Badge className="bg-success text-white">Concluído</Badge><span className="font-mono text-xs text-muted-foreground">RUN-2482</span></div><h2 className="mt-3 text-2xl font-medium">Carteira Ibovespa · RSI2 clássico</h2><p className="mt-2 text-sm text-muted-foreground">04/01/2021–31/07/2026 · 127 ativos · atualizado agora</p></div><div className="flex gap-2"><Button variant="outline" onClick={()=>toast.success("Relatório CSV preparado.")}><Download className="size-4"/>Exportar</Button><Button onClick={onNew}><Save className="size-4"/>Duplicar</Button></div></div><section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><MetricCard label="Retorno total" value="+36,2%" delta="+17,2 p.p. vs. IBOV" tone="positive"/><MetricCard label="CAGR" value="5,7% a.a." delta="Líquido de custos" tone="positive"/><MetricCard label="Sharpe" value="1,41" delta="Bom" tone="positive"/><MetricCard label="Drawdown máximo" value="−12,7%" delta="34 dias" tone="negative"/></section><Card className="mt-6 shadow-none"><CardContent className="p-5 md:p-6"><Tabs defaultValue="summary"><TabsList className="w-full justify-start overflow-x-auto"><TabsTrigger value="summary">Resumo</TabsTrigger><TabsTrigger value="exposure">Exposição</TabsTrigger><TabsTrigger value="assets">Ativos</TabsTrigger><TabsTrigger value="trades">Operações</TabsTrigger><TabsTrigger value="method">Metodologia</TabsTrigger></TabsList><TabsContent value="summary" className="mt-6"><EquityChart/></TabsContent><TabsContent value="exposure" className="mt-6"><div className="grid gap-4 md:grid-cols-3"><MetricCard label="Exposição média" value="42,8%"/><MetricCard label="Pico de posições" value="10"/><MetricCard label="Tempo em caixa" value="57,2%"/></div></TabsContent><TabsContent value="assets" className="mt-6"><p className="text-sm text-muted-foreground">WEGE3, PETR4 e VALE3 concentraram 31% do resultado positivo; nenhuma contribuição individual excedeu 12%.</p></TabsContent><TabsContent value="trades" className="mt-6 overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Ativo</TableHead><TableHead>Entrada</TableHead><TableHead>Saída</TableHead><TableHead>Barras</TableHead><TableHead className="text-right">P&L</TableHead><TableHead className="text-right">Retorno</TableHead><TableHead>Motivo</TableHead></TableRow></TableHeader><TableBody>{trades.map(t=><TableRow key={t.ticker+t.entry}><TableCell className="font-medium">{t.ticker}</TableCell><TableCell>{t.entry}</TableCell><TableCell>{t.exit}</TableCell><TableCell>{t.bars}</TableCell><TableCell className={`text-right ${t.pnl.startsWith("+")?"text-success":"text-destructive"}`}>{t.pnl}</TableCell><TableCell className="text-right">{t.return}</TableCell><TableCell>{t.reason}</TableCell></TableRow>)}</TableBody></Table></TabsContent><TabsContent value="method" className="mt-6 space-y-3 text-sm leading-6 text-muted-foreground"><p>Entradas são avaliadas no fechamento e executadas com slippage configurado. A saída por RSI acumulado tem precedência sobre a saída por tempo.</p><p>O resultado inclui custos, preços ajustados e fechamento obrigatório na última barra real de cada ativo.</p></TabsContent></Tabs></CardContent></Card></div>; }

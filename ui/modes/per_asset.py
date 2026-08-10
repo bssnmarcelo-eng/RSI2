@@ -21,7 +21,7 @@ def run_per_asset_mode(note: str = "", data_src: dict | None = None):
 
     with data_box:
         st.subheader("📥 Dados")
-        pending = collect_multi_asset_data(cfg, "Tickers to test independently", data_src)
+        pending = collect_multi_asset_data(cfg, "Ativos para testar independentemente", data_src)
         is_pending = isinstance(pending, dict) and pending.get("_pending")
         data_by_ticker = None
         if pending is None:
