@@ -24,6 +24,7 @@ def run_per_asset_mode(note: str = "", data_src: dict | None = None):
         pending = collect_multi_asset_data(cfg, "Ativos para testar independentemente", data_src)
         is_pending = isinstance(pending, dict) and pending.get("_pending")
         data_by_ticker = None
+        option_data_by_ticker = None
         if pending is None:
             st.session_state.pop("_per_asset_combined", None)
             st.session_state.pop("_per_asset_results", None)
@@ -41,7 +42,9 @@ def run_per_asset_mode(note: str = "", data_src: dict | None = None):
 
     if submitted and pending is not None:
         if is_pending:
-            data_by_ticker = _resolve_norgate_pending(pending, cfg)
+            resolved = _resolve_norgate_pending(pending, cfg)
+            if resolved is not None:
+                data_by_ticker, option_data_by_ticker = resolved
         if data_by_ticker is not None:
             all_trades = []
             results_by_ticker = {}
@@ -52,7 +55,11 @@ def run_per_asset_mode(note: str = "", data_src: dict | None = None):
                     _idx / _total,
                     text=f"[{_idx + 1}/{_total}] {t} · {len(d):,} barras…",
                 )
-                res = BacktestEngine(d, replace(cfg, ticker=t)).run()
+                res = BacktestEngine(
+                    d,
+                    replace(cfg, ticker=t),
+                    option_data=(option_data_by_ticker or {}).get(t),
+                ).run()
                 results_by_ticker[t] = res
                 if not res.trades.empty:
                     all_trades.append(res.trades)

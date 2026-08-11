@@ -14,6 +14,10 @@ from src.types import (
     Execution,
     ExitConfig,
     HammerParams,
+    InstrumentType,
+    OptionConfig,
+    OptionPricingModel,
+    OptionSizingMode,
     PatternConfig,
     PortfolioConfig,
     PortfolioSizing,
@@ -169,6 +173,91 @@ def _costs_tab() -> CostConfig:
     return costs
 
 
+def _options_tab() -> tuple[InstrumentType, OptionConfig]:
+    """Render the synthetic call assumptions shared by both UIs."""
+    use_options = st.checkbox(
+        "Calcular equivalência dos trades em calls sintéticas (ATM/OTM)",
+        value=False,
+        key="p_option_enabled",
+        help="Mantém o backtest em ações e acrescenta colunas mark-to-model para as mesmas operações.",
+    )
+    model_label = st.selectbox(
+        "Modelo de precificação",
+        ["Black-Scholes-Merton", "Árvore binomial CRR"],
+        key="p_option_model",
+    )
+    strike_mode_label = st.selectbox(
+        "Seleção do strike",
+        ["ATM exato (K = preço)", "ATM na grade sintética", "Call OTM por percentual"],
+        key="p_option_strike_mode",
+    )
+    strike_interval = st.number_input("Intervalo da grade de strikes", min_value=0.01,
+                                      value=1.0, step=0.5, key="p_option_strike_interval",
+                                      disabled=strike_mode_label.startswith("ATM exato"))
+    otm_pct = st.number_input("Distância OTM (%)", min_value=0.1, max_value=1000.0,
+                              value=10.0, step=0.5, key="p_option_otm_pct",
+                              disabled=not strike_mode_label.startswith("Call OTM"))
+    target_dte = st.number_input("DTE-alvo", min_value=7, max_value=730,
+                                 value=45, step=1, key="p_option_dte")
+    c3, c4 = st.columns(2)
+    vol_window = c3.number_input("Janela da volatilidade realizada", min_value=2,
+                                 max_value=252, value=20, step=1, key="p_option_vol_window")
+    iv_multiplier = c4.number_input("Multiplicador RV → IV", min_value=0.01,
+                                    max_value=10.0, value=1.20, step=0.05, key="p_option_iv_mult")
+    c5, c6 = st.columns(2)
+    iv_floor = c5.number_input("Piso de IV", min_value=0.01, max_value=10.0,
+                               value=0.10, step=0.01, format="%.2f", key="p_option_iv_floor")
+    iv_cap = c6.number_input("Teto de IV", min_value=0.01, max_value=10.0,
+                             value=2.0, step=0.10, format="%.2f", key="p_option_iv_cap")
+    c7, c8 = st.columns(2)
+    rate_mode_label = c7.selectbox("Fonte da taxa livre de risco", ["Norgate histórico", "Taxa fixa"],
+                                   key="p_option_rate_mode")
+    rate_symbol = c8.text_input("Símbolo Norgate da taxa", value="%3MTCM",
+                                key="p_option_rate_symbol")
+    c7, c8 = st.columns(2)
+    risk_free = c7.number_input("Taxa livre de risco anual (%)", min_value=-10.0,
+                                max_value=100.0, value=4.0, step=0.25, key="p_option_rate") / 100.0
+    fallback_yield = c8.number_input("Dividend yield fallback (%)", min_value=0.0,
+                                     max_value=100.0, value=0.0, step=0.25, key="p_option_yield") / 100.0
+    c9, c10 = st.columns(2)
+    spread = c9.number_input("Spread bid/ask total (% do prêmio)", min_value=0.0,
+                             max_value=200.0, value=8.0, step=0.5, key="p_option_spread") / 100.0
+    commission = c10.number_input("Comissão por contrato/ponta", min_value=0.0,
+                                  value=0.65, step=0.05, key="p_option_commission")
+    sizing_label = st.selectbox(
+        "Dimensionamento",
+        ["Percentual do patrimônio em prêmio", "Exposição delta equivalente"],
+        key="p_option_sizing",
+    )
+    premium_pct = st.number_input("Orçamento por operação (% do patrimônio)", min_value=0.1,
+                                  max_value=100.0, value=10.0, step=0.5, key="p_option_premium_pct")
+    if use_options:
+        st.info(
+            "A periodicidade escolhida continua gerando todos os sinais e saídas. "
+            "Dados diários Capital são usados somente para estimar os prêmios das calls. "
+            "Não há rolagem: a call encerra na saída da ação ou no vencimento."
+        )
+    options = OptionConfig(
+        enabled=bool(use_options),
+        pricing_model=(OptionPricingModel.BLACK_SCHOLES if model_label.startswith("Black")
+                       else OptionPricingModel.BINOMIAL),
+        strike_mode=("exact_atm" if strike_mode_label.startswith("ATM exato")
+                     else "otm_pct" if strike_mode_label.startswith("Call OTM") else "rounded"),
+        strike_interval=float(strike_interval), otm_pct=float(otm_pct),
+        target_dte=int(target_dte), roll_dte=0,
+        volatility_window=int(vol_window), iv_multiplier=float(iv_multiplier),
+        iv_floor=float(iv_floor), iv_cap=float(iv_cap), risk_free_rate=float(risk_free),
+        risk_free_mode="norgate" if rate_mode_label.startswith("Norgate") else "fixed",
+        risk_free_symbol=rate_symbol.strip() or "%3MTCM",
+        dividend_yield=float(fallback_yield), spread_pct=float(spread),
+        commission_per_contract=float(commission),
+        sizing_mode=(OptionSizingMode.PREMIUM_RISK if sizing_label.startswith("Percentual")
+                     else OptionSizingMode.DELTA_EQUIVALENT),
+        premium_risk_pct=float(premium_pct),
+    )
+    return (InstrumentType.SYNTHETIC_ATM_CALL if use_options else InstrumentType.STOCK), options
+
+
 def _single_sizing_tab() -> tuple[float, SizingConfig]:
     """Single-asset capital & position-sizing widgets; return (initial_capital, SizingConfig)."""
     initial_capital = st.number_input("Capital inicial", min_value=1.0, value=100_000.0,
@@ -242,6 +331,8 @@ def configuration_form(mode: str, *, with_run: bool):
     init_cap = None
     ex = ExitConfig()
     costs = CostConfig()
+    instrument = InstrumentType.STOCK
+    options = OptionConfig()
     submit_label = "Aplicar e rodar ▶" if with_run else "Aplicar parâmetros ▶"
 
     with st.form(f"config_form_{mode}"):
@@ -251,14 +342,16 @@ def configuration_form(mode: str, *, with_run: bool):
             with tab_e:
                 e = _entry_tab()
         else:
-            tab_e, tab_x, tab_c, tab_s = st.tabs(
-                ["📥 Entrada", "🚪 Saídas", "🧾 Custos", "💰 Sizing"])
+            tab_e, tab_x, tab_c, tab_o, tab_s = st.tabs(
+                ["📥 Entrada", "🚪 Saídas", "🧾 Custos", "Opções ATM", "💰 Sizing"])
             with tab_e:
                 e = _entry_tab()
             with tab_x:
                 ex = _exits_tab()
             with tab_c:
                 costs = _costs_tab()
+            with tab_o:
+                instrument, options = _options_tab()
             with tab_s:
                 if mode == "portfolio":
                     pconf = _portfolio_tab()
@@ -288,6 +381,8 @@ def configuration_form(mode: str, *, with_run: bool):
         exit_execution=Execution.NEXT_OPEN if e["exit_exec"].startswith("Próxima") else Execution.SIGNAL_CLOSE,
         exits=ex,
         costs=costs,
+        instrument=instrument,
+        options=options,
         apply_corporate_actions=bool(e["apply_actions"]),
     )
     if sizing is not None:

@@ -23,7 +23,7 @@ Per-bar processing order:
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import List, Optional
 
 import numpy as np
@@ -31,7 +31,7 @@ import pandas as pd
 
 from . import indicators
 from .candlestick_patterns import detect_all
-from .types import Execution, SizingMethod, StrategyConfig, Trade
+from .types import Execution, InstrumentType, SizingMethod, StrategyConfig, Trade
 from .utils import commission_for
 
 
@@ -125,8 +125,10 @@ def build_signal_frame(data: pd.DataFrame, config: StrategyConfig) -> pd.DataFra
 class BacktestEngine:
     """Runs one long-only mean-reversion backtest on a prepared OHLC frame."""
 
-    def __init__(self, data: pd.DataFrame, config: StrategyConfig):
+    def __init__(self, data: pd.DataFrame, config: StrategyConfig,
+                 option_data: Optional[pd.DataFrame] = None):
         self.raw = data
+        self.option_data = option_data
         self.config = config
         self.warnings: List[str] = []
 
@@ -283,6 +285,22 @@ class BacktestEngine:
         approximately every 250 bars so the UI can update a progress bar.
         """
         cfg = self.config
+        if cfg.options.enabled or cfg.instrument == InstrumentType.SYNTHETIC_ATM_CALL:
+            from .options.simulation import annotate_synthetic_call_comparison
+
+            base_cfg = replace(
+                cfg,
+                instrument=InstrumentType.STOCK,
+                options=replace(cfg.options, enabled=False),
+            )
+            base = BacktestEngine(self.raw, base_cfg).run(progress=progress)
+            return annotate_synthetic_call_comparison(
+                base,
+                {cfg.ticker: self.option_data if self.option_data is not None else self.raw},
+                cfg,
+                initial_capital=cfg.initial_capital,
+                max_positions=1,
+            )
         df = self._prepare_signals()
         n = len(df)
 

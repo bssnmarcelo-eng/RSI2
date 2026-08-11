@@ -24,14 +24,21 @@ No look-ahead bias
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
 from .backtest_engine import add_period_mfe, build_signal_frame
-from .types import Execution, PortfolioConfig, PortfolioSizing, StrategyConfig, Trade
+from .types import (
+    Execution,
+    InstrumentType,
+    PortfolioConfig,
+    PortfolioSizing,
+    StrategyConfig,
+    Trade,
+)
 from .utils import commission_for, financing_cost
 
 
@@ -84,8 +91,10 @@ class PortfolioEngine:
         data_by_ticker: Dict[str, pd.DataFrame],
         config: StrategyConfig,
         portfolio: PortfolioConfig,
+        option_data_by_ticker: Optional[Dict[str, pd.DataFrame]] = None,
     ):
         self.data_by_ticker = data_by_ticker
+        self.option_data_by_ticker = option_data_by_ticker
         self.config = config
         self.portfolio = portfolio
         self.warnings: List[str] = []
@@ -173,6 +182,23 @@ class PortfolioEngine:
     def run(self, progress=None) -> PortfolioResult:
         cfg = self.config
         pf = self.portfolio
+
+        if cfg.options.enabled or cfg.instrument == InstrumentType.SYNTHETIC_ATM_CALL:
+            from .options.simulation import annotate_synthetic_call_comparison
+
+            base_cfg = replace(
+                cfg,
+                instrument=InstrumentType.STOCK,
+                options=replace(cfg.options, enabled=False),
+            )
+            base = PortfolioEngine(self.data_by_ticker, base_cfg, pf).run(progress=progress)
+            return annotate_synthetic_call_comparison(
+                base,
+                self.option_data_by_ticker or self.data_by_ticker,
+                cfg,
+                initial_capital=pf.initial_capital,
+                max_positions=pf.max_positions,
+            )
 
         # Build causal signal frames per ticker.
         frames = {t: build_signal_frame(df, cfg) for t, df in self.data_by_ticker.items()}

@@ -45,6 +45,15 @@ def render_trade_log(trades: pd.DataFrame, equity: pd.Series, key: str) -> None:
     for mfe_col in ["mfe", "mfe_1w", "mfe_2w", "mfe_3w", "mfe_4w", "mfe_5w"]:
         if mfe_col in display:
             display[mfe_col] = trades[mfe_col].map(lambda v: fmt_pct(v) if pd.notna(v) else "—")
+    for col in ["option_underlying_entry_price", "option_underlying_exit_price",
+                "option_strike", "option_entry_price", "option_exit_price", "option_pnl",
+                "option_commissions"]:
+        if col in display:
+            display[col] = trades[col].map(lambda v: fmt_money(v) if pd.notna(v) else "—")
+    for col in ["option_underlying_return", "option_gross_return", "option_net_return",
+                "option_iv_entry", "option_iv_exit", "option_mfe"]:
+        if col in display:
+            display[col] = trades[col].map(lambda v: fmt_pct(v) if pd.notna(v) else "—")
     st.dataframe(display, use_container_width=True, hide_index=True)
     cols = st.columns(2)
     cols[0].download_button("Baixar operações (CSV)", data=trades.to_csv(index=False).encode("utf-8"),
@@ -86,6 +95,26 @@ def render_portfolio_metrics(metrics: dict, result) -> None:
         r6 = st.columns(2)
         r6[0].metric("Juros de margem", fmt_money(-result.financing_costs))
         r6[1].metric("Dividendos recebidos", fmt_money(result.dividend_income))
+    if result.config.options.enabled:
+        st.markdown("#### Sensibilidade da call sintética")
+        st.caption("Mark-to-model: os cenários recalculam IV, contratos e patrimônio com os mesmos sinais da ação.")
+        scenario_metrics = getattr(result, "scenario_metrics", {})
+        scenario_equity = getattr(result, "scenario_equity", {})
+        labels = [("low", "IV baixa (0,85×)"), ("base", "IV base"), ("high", "IV alta (1,15×)")]
+        cols = st.columns(3)
+        for col, (key, label) in zip(cols, labels, strict=True):
+            values = scenario_metrics.get(key, {})
+            col.metric(label, fmt_pct(values.get("total_return", 0.0)),
+                       fmt_money(values.get("final_equity", 0.0)))
+        available = [(key, label) for key, label in labels if key in scenario_equity]
+        if available:
+            tabs = st.tabs([label for _, label in available])
+            for tab, (key, _label) in zip(tabs, available, strict=True):
+                with tab:
+                    st.plotly_chart(
+                        charts.equity_chart(scenario_equity[key], result.portfolio.initial_capital),
+                        use_container_width=True,
+                    )
 
 
 def per_ticker_table(trades: pd.DataFrame, indexname: str | None = None) -> pd.DataFrame:
@@ -338,6 +367,22 @@ def render_trades_overview(trades: pd.DataFrame, n_assets: int) -> None:
     r3[2].metric("Worst trade", fmt_pct(s["worst"]))
     r3[3].metric("Avg holding (bars)", fmt_num(s["avg_holding"], 1))
 
+    priced_options = (trades[trades["option_status"] == "priced"]
+                      if "option_status" in trades else pd.DataFrame())
+    if not priced_options.empty and "option_net_return" in priced_options:
+        st.subheader("Equivalência das mesmas operações em Call sintética")
+        option_returns = pd.to_numeric(priced_options["option_net_return"], errors="coerce").dropna()
+        option_pnl = pd.to_numeric(priced_options["option_pnl"], errors="coerce").dropna()
+        ocols = st.columns(4)
+        ocols[0].metric("Trades precificados", f"{len(option_returns)} / {len(trades)}")
+        ocols[1].metric("Taxa de acerto da call", fmt_pct(float((option_returns > 0).mean())))
+        ocols[2].metric("Retorno médio da call", fmt_pct(float(option_returns.mean())))
+        ocols[3].metric("P&L total equivalente", fmt_money(float(option_pnl.sum())))
+        st.caption(
+            "Os números principais acima continuam sendo das ações. Esta linha usa exatamente "
+            "as mesmas entradas e saídas para estimar a call sintética."
+        )
+
     # Per-asset breakdown table.
     st.subheader("Detalhamento por ativo")
     st.caption(
@@ -413,7 +458,13 @@ def render_trades_overview(trades: pd.DataFrame, n_assets: int) -> None:
                   "signal_body_percentile", "signal_atr_mult", "pattern", "entry_date",
                   "entry_price", "exit_date", "exit_price", "exit_reason", "bars_held",
                   "gross_return", "net_return", "pnl",
-                  "mfe", "mfe_1w", "mfe_2w", "mfe_3w", "mfe_4w", "mfe_5w"]
+                  "mfe", "mfe_1w", "mfe_2w", "mfe_3w", "mfe_4w", "mfe_5w",
+                  "option_status", "option_entry_date", "option_exit_date", "option_exit_reason",
+                  "option_underlying_entry_price", "option_underlying_exit_price",
+                  "option_strike", "option_expiration", "option_dte_entry", "option_dte_exit",
+                  "option_contracts", "option_iv_entry", "option_iv_exit", "option_delta_entry",
+                  "option_entry_price", "option_exit_price", "option_net_return", "option_pnl",
+                  "option_commissions"]
     cols_order = [c for c in cols_order if c in trades.columns]
     raw = trades[cols_order].sort_values("entry_date").reset_index(drop=True)
     disp = raw.copy()
@@ -431,6 +482,14 @@ def render_trades_overview(trades: pd.DataFrame, n_assets: int) -> None:
     for mfe_col in ["mfe", "mfe_1w", "mfe_2w", "mfe_3w", "mfe_4w", "mfe_5w"]:
         if mfe_col in disp:
             disp[mfe_col] = raw[mfe_col].map(lambda v: fmt_pct(v) if pd.notna(v) else "—")
+    for col in ["option_underlying_entry_price", "option_underlying_exit_price",
+                "option_strike", "option_entry_price", "option_exit_price", "option_pnl",
+                "option_commissions"]:
+        if col in disp:
+            disp[col] = raw[col].map(lambda v: fmt_money(v) if pd.notna(v) else "—")
+    for col in ["option_iv_entry", "option_iv_exit", "option_net_return"]:
+        if col in disp:
+            disp[col] = raw[col].map(lambda v: fmt_pct(v) if pd.notna(v) else "—")
     st.dataframe(disp, use_container_width=True, hide_index=True)
 
     st.download_button("Baixar todas as operações (CSV)",

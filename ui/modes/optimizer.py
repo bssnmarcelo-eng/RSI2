@@ -177,7 +177,8 @@ def run_optimizer_mode(note: str = "", data_src: dict | None = None):
         return
 
     if is_pending:
-        data_by_ticker = _resolve_norgate_pending(pending, cfg)
+        resolved = _resolve_norgate_pending(pending, cfg)
+        data_by_ticker = resolved[0] if resolved is not None else None
         if data_by_ticker is None:
             return
 

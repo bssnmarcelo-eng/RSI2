@@ -14,3 +14,4 @@ Thumbs.db
 *.log
 logs/*
 !logs/.gitkeep
+.local-run/

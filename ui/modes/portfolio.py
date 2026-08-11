@@ -39,6 +39,7 @@ def run_portfolio_mode(note: str = "", data_src: dict | None = None):
     cfg, pconf, submitted = configuration_form("portfolio", with_run=True)
 
     data_by_ticker = None
+    option_data_by_ticker = None
     _pf_sig = None
     with data_box:
         st.subheader("📥 Dados")
@@ -74,13 +75,18 @@ def run_portfolio_mode(note: str = "", data_src: dict | None = None):
     if submitted and pending is not None:
         _bar = st.progress(0.0, text="Preparando sinais…")
         if is_pending:
-            data_by_ticker = _resolve_norgate_pending(pending, cfg)
+            resolved = _resolve_norgate_pending(pending, cfg)
+            if resolved is not None:
+                data_by_ticker, option_data_by_ticker = resolved
         if data_by_ticker is None:
             _bar.empty()
         else:
             _n_assets = len(data_by_ticker)
             _bar.progress(0.0, text=f"Executando portfolio · {_n_assets} ativos…")
-            result = PortfolioEngine(data_by_ticker, cfg, pconf).run(
+            result = PortfolioEngine(
+                data_by_ticker, cfg, pconf,
+                option_data_by_ticker=option_data_by_ticker,
+            ).run(
                 progress=lambda p: _bar.progress(
                     p, text=f"Executando portfolio · {p:.0%} do calendário processado…"
                 )

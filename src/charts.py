@@ -85,9 +85,11 @@ def price_chart(
         )
 
     if not trades.empty:
+        entry_price_col = "underlying_entry_price" if "underlying_entry_price" in trades else "entry_price"
+        exit_price_col = "underlying_exit_price" if "underlying_exit_price" in trades else "exit_price"
         fig.add_trace(
             go.Scatter(
-                x=trades["entry_date"], y=trades["entry_price"], mode="markers",
+                x=trades["entry_date"], y=trades[entry_price_col], mode="markers",
                 name="Entrada",
                 marker=dict(symbol="triangle-up", size=11, color="#2e7d32",
                             line=dict(width=1, color="white")),
@@ -96,7 +98,7 @@ def price_chart(
         )
         fig.add_trace(
             go.Scatter(
-                x=trades["exit_date"], y=trades["exit_price"], mode="markers",
+                x=trades["exit_date"], y=trades[exit_price_col], mode="markers",
                 name="Saída",
                 marker=dict(symbol="triangle-down", size=11, color="#c62828",
                             line=dict(width=1, color="white")),

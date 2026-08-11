@@ -111,6 +111,7 @@ def fetch_price(
     start_date: str = "1990-01-01",
     end_date: Optional[str] = None,
     frequency_label: str = "Semanal",
+    include_option_inputs: bool = False,
 ) -> Tuple[pd.DataFrame, List[str]]:
     """Fetch OHLCV for *symbol* and return (df, warnings).
 
@@ -163,6 +164,42 @@ def fetch_price(
     if df.empty:
         warnings.append(f"{symbol}: sem barras válidas após limpeza.")
 
+    if include_option_inputs and not df.empty:
+        # Norgate's yield is a trailing-12-month percentage observed at each
+        # close. It is causal, but it is not a forecast of announced dividends.
+        try:
+            yields = nd.dividend_yield_timeseries(
+                symbol,
+                padding_setting=nd.PaddingType.NONE,
+                start_date=start_date,
+                end_date=end_date or "2999-01-01",
+                timeseriesformat="pandas-dataframe",
+            )
+            if yields is not None and not yields.empty:
+                yields.index = pd.to_datetime(yields.index)
+                series = pd.to_numeric(yields.iloc[:, 0], errors="coerce")
+                # API values are percentage points (0.52 means 0.52%). Store
+                # fractions internally so pricing receives 0.0052.
+                df["dividend_yield"] = series.reindex(df.index).ffill() / 100.0
+            else:
+                warnings.append(f"{symbol}: dividend yield Norgate indisponível; usando fallback configurado.")
+        except Exception as exc:
+            warnings.append(f"{symbol}: dividend yield Norgate indisponível — {exc}")
+        try:
+            events = nd.capital_event_timeseries(
+                symbol,
+                padding_setting=nd.PaddingType.NONE,
+                start_date=start_date,
+                end_date=end_date or "2999-01-01",
+                timeseriesformat="pandas-dataframe",
+            )
+            if events is not None and not events.empty:
+                events.index = pd.to_datetime(events.index)
+                flags = pd.to_numeric(events.iloc[:, 0], errors="coerce").fillna(0.0)
+                df["capital_event"] = flags.reindex(df.index).fillna(0.0).astype(bool)
+        except Exception as exc:
+            warnings.append(f"{symbol}: eventos de capital Norgate indisponíveis — {exc}")
+
     return df, warnings
 
 
@@ -174,6 +211,8 @@ def fetch_many(
     min_bars: int = 20,
     frequency_label: str = "Semanal",
     progress: Optional[Callable[[float], None]] = None,
+    include_option_inputs: bool = False,
+    risk_free_symbol: str = "%3MTCM",
 ) -> Tuple[Dict[str, pd.DataFrame], List[str], List[str]]:
     """Fetch OHLCV for multiple symbols.
 
@@ -186,7 +225,10 @@ def fetch_many(
     n = len(symbols)
 
     for i, sym in enumerate(symbols):
-        df, w = fetch_price(sym, adjustment_label, start_date, end_date, frequency_label)
+        df, w = fetch_price(
+            sym, adjustment_label, start_date, end_date, frequency_label,
+            include_option_inputs=include_option_inputs,
+        )
         all_warnings.extend(w)
         if df.empty or len(df) < min_bars:
             skipped.append(sym)
@@ -194,6 +236,33 @@ def fetch_many(
             data[sym] = df
         if progress:
             progress((i + 1) / n)
+
+    if include_option_inputs and data and risk_free_symbol:
+        try:
+            nd = _nd()
+            rates = nd.price_timeseries(
+                risk_free_symbol,
+                padding_setting=nd.PaddingType.NONE,
+                timeseriesformat="pandas-dataframe",
+                interval="D",
+                start_date=start_date,
+                end_date=end_date or "2999-01-01",
+            )
+            if rates is None or rates.empty:
+                all_warnings.append(
+                    f"Taxa livre de risco {risk_free_symbol} indisponível; usando fallback configurado."
+                )
+            else:
+                rates.index = pd.to_datetime(rates.index)
+                columns = {str(column).lower(): column for column in rates.columns}
+                rate_column = columns.get("close", rates.columns[-1])
+                annual_rate = pd.to_numeric(rates[rate_column], errors="coerce") / 100.0
+                for frame in data.values():
+                    frame["risk_free_rate"] = annual_rate.reindex(frame.index).ffill()
+        except Exception as exc:
+            all_warnings.append(
+                f"Taxa livre de risco {risk_free_symbol} indisponível — {exc}; usando fallback configurado."
+            )
 
     return data, all_warnings, skipped
 

@@ -45,6 +45,27 @@ class PortfolioSizing(str, Enum):
     FULL_EQUITY = "full_equity"  # 100% of equity per trade, unlimited buying power
 
 
+class InstrumentType(str, Enum):
+    """Instrument used to express the strategy signal."""
+
+    STOCK = "stock"
+    SYNTHETIC_ATM_CALL = "synthetic_atm_call"
+
+
+class OptionPricingModel(str, Enum):
+    """Supported theoretical option-pricing engines."""
+
+    BLACK_SCHOLES = "black_scholes"
+    BINOMIAL = "binomial"
+
+
+class OptionSizingMode(str, Enum):
+    """How long-call contracts are sized."""
+
+    PREMIUM_RISK = "premium_risk"
+    DELTA_EQUIVALENT = "delta_equivalent"
+
+
 class CommissionModel(str, Enum):
     """How per-order commissions are computed."""
 
@@ -160,6 +181,36 @@ class SizingConfig:
 
 
 @dataclass
+class OptionConfig:
+    """Assumptions for the synthetic long-call simulation."""
+
+    enabled: bool = False
+    pricing_model: OptionPricingModel = OptionPricingModel.BLACK_SCHOLES
+    strike_mode: str = "exact_atm"
+    strike_interval: float = 1.0
+    otm_pct: float = 10.0
+    target_dte: int = 45
+    # Kept in serialized configurations for backward compatibility; rolling is disabled.
+    roll_dte: int = 0
+    volatility_window: int = 20
+    iv_multiplier: float = 1.20
+    iv_floor: float = 0.10
+    iv_cap: float = 2.00
+    iv_scenario: float = 1.0
+    risk_free_mode: str = "norgate"      # norgate | fixed
+    risk_free_symbol: str = "%3MTCM"
+    risk_free_rate: float = 0.04
+    dividend_yield: float = 0.0
+    spread_pct: float = 0.08
+    minimum_half_spread: float = 0.01
+    commission_per_contract: float = 0.65
+    contract_multiplier: int = 100
+    sizing_mode: OptionSizingMode = OptionSizingMode.PREMIUM_RISK
+    premium_risk_pct: float = 10.0
+    binomial_steps: int = 200
+
+
+@dataclass
 class PortfolioConfig:
     """Shared-capital portfolio settings (used by the multi-asset engine).
 
@@ -202,6 +253,8 @@ class StrategyConfig:
     exits: ExitConfig = field(default_factory=ExitConfig)
     costs: CostConfig = field(default_factory=CostConfig)
     sizing: SizingConfig = field(default_factory=SizingConfig)
+    instrument: InstrumentType = InstrumentType.STOCK
+    options: OptionConfig = field(default_factory=OptionConfig)
 
     # --- Account ---
     initial_capital: float = 100_000.0

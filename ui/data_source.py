@@ -288,10 +288,14 @@ def collect_multi_asset_data(
     return data_by_ticker
 
 
-def _resolve_norgate_pending(pending: dict, cfg: StrategyConfig) -> dict | None:
+def _resolve_norgate_pending(
+    pending: dict, cfg: StrategyConfig
+) -> tuple[dict, dict | None] | None:
     """Fetch Norgate data for a pending multi-asset spec (called inside Run spinner).
 
-    Returns a ready {ticker: df} dict, or None on failure.
+    Returns ``(signal_frames, option_pricing_frames)``.  Signal frames always
+    retain the frequency and adjustment selected by the user; optional daily
+    Capital frames are loaded separately only for synthetic-call valuation.
     """
     symbols = pending["symbols"]
     min_bars = max(cfg.rsi_period + 2, 5)
@@ -304,9 +308,12 @@ def _resolve_norgate_pending(pending: dict, cfg: StrategyConfig) -> dict | None:
         end_date=pending["end"],
         min_bars=min_bars,
         frequency_label=pending.get("frequency", "Semanal"),
-        progress=lambda p: bar.progress(p, text="Baixando dados do Norgate…"),
+        include_option_inputs=False,
+        progress=lambda p: bar.progress(
+            p * (0.55 if cfg.options.enabled else 1.0),
+            text="Baixando dados da estratégia…",
+        ),
     )
-    bar.empty()
     for w in warns:
         st.warning(w)
     if skipped:
@@ -316,8 +323,39 @@ def _resolve_norgate_pending(pending: dict, cfg: StrategyConfig) -> dict | None:
             + (f" … e mais {len(skipped) - 20}" if len(skipped) > 20 else "")
         )
     if not data:
+        bar.empty()
         st.error("Nenhum ativo com dados válidos no período selecionado.")
         return None
+
+    option_data = None
+    if cfg.options.enabled:
+        st.info(
+            f"Os sinais permanecem em **{pending.get('frequency', 'Semanal')}**. "
+            "Uma série diária Capital é carregada separadamente apenas para precificar as calls."
+        )
+        option_data, option_warns, option_skipped = norgate_loader.fetch_many(
+            list(data),
+            adjustment_label="Capital (apenas splits)",
+            start_date=pending["start"],
+            end_date=pending["end"],
+            min_bars=max(cfg.options.volatility_window + 2, 5),
+            frequency_label="Diário",
+            include_option_inputs=True,
+            risk_free_symbol=(cfg.options.risk_free_symbol
+                              if cfg.options.risk_free_mode == "norgate" else ""),
+            progress=lambda p: bar.progress(
+                0.55 + p * 0.45,
+                text="Carregando série diária auxiliar para as calls…",
+            ),
+        )
+        for warning in option_warns:
+            st.warning(warning)
+        if option_skipped:
+            st.warning(
+                "Sem série diária auxiliar para precificar calls: "
+                + ", ".join(option_skipped[:20])
+            )
+    bar.empty()
 
     # Point-in-time gating: attach a membership mask per ticker and drop assets
     # that were never constituents of the chosen index in the period.
@@ -337,7 +375,9 @@ def _resolve_norgate_pending(pending: dict, cfg: StrategyConfig) -> dict | None:
                 "Verifique o nome do índice ou desligue a restrição."
             )
             return None
-    return data
+    if option_data is not None:
+        option_data = {ticker: frame for ticker, frame in option_data.items() if ticker in data}
+    return data, option_data
 
 
 @st.cache_data(ttl=3600, show_spinner=False)

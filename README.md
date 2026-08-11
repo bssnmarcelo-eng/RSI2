@@ -98,6 +98,34 @@ to these fills (commissions still are).
 
 ## Quick start
 
+### Novo frontend local + Norgate
+
+O frontend redesenhado roda localmente e consulta a mesma instalação do Norgate
+Data usada pelo Streamlit. Na primeira execução, instale as dependências:
+
+```powershell
+python -m pip install -e ".[api,norgate]"
+cd web
+npm install
+cd ..
+```
+
+Com o Norgate Data Updater aberto, inicie frontend e API juntos:
+
+```powershell
+.\scripts\start_local.ps1
+```
+
+O script abre `http://127.0.0.1:3000`, mantém a API em
+`http://127.0.0.1:8000` e encerra ambos com `Ctrl+C`. Os logs locais ficam em
+`.local-run/`. A tela **Configurações** permite testar ou alterar o endereço da
+API. Backtests, screening, otimização e fundamentos usam o Norgate local; a home
+e o histórico exibem somente resultados reais da API. Os preços permanecem neste
+computador; o site publicado não consegue ler diretamente o banco local do
+Norgate.
+
+### Streamlit (interface original)
+
 ```bash
 cd backtest_app
 python -m venv .venv
@@ -132,6 +160,31 @@ Run quality checks with `pytest` and `ruff check src ui tests app.py`.
 
 Streamlit opens the app in your browser. Upload a CSV, pick a ticker and date
 range, adjust parameters in the sidebar, and click **Run Backtest**.
+
+### Calls sintéticas ATM ou OTM
+
+As duas interfaces podem manter o backtest original em ações e acrescentar uma
+**equivalência em call sintética** para cada operação. O sinal, o Hammer, o
+stop, o alvo, a quantidade de trades, o P&L da ação e a curva principal continuam
+na periodicidade escolhida pelo usuário.
+
+- O modelo padrão é Black-Scholes-Merton; a árvore binomial CRR é alternativa.
+- O strike pode ser ATM exato, ATM arredondado para uma grade ou OTM por
+  percentual. No modo OTM, o padrão é aproximadamente 10% acima do spot,
+  arredondado para o intervalo de strikes configurado.
+- A série escolhida (semanal, diária ou mensal) continua gerando os trades. Uma
+  segunda série diária **Capital (apenas splits)** é carregada silenciosamente
+  apenas para estimar IV, spot e prêmio da opção.
+- A IV é estimada causalmente pela volatilidade realizada até a data da operação.
+- Dividend yield histórico da Norgate, spread, comissão e DTE entram no cálculo.
+  Não há rolagem: a call encerra na saída da ação ou, se o trade continuar,
+  no vencimento pelo valor intrínseco.
+- Cada linha mantém as colunas da ação e recebe colunas `option_*` com datas
+  econômicas de entrada/saída, strike, DTE, contratos, prêmio, gregos, retorno e
+  P&L equivalentes. Cenários de IV baixa, base e alta ficam em uma curva paralela.
+
+Esses resultados são `mark-to-model`: não comprovam que o strike, vencimento,
+liquidez ou preço calculado estavam disponíveis para execução no mercado.
 
 ---
 
