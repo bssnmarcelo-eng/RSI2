@@ -72,6 +72,7 @@ class PortfolioResult:
     equity_curve: pd.Series           # combined portfolio equity at each bar close
     positions_open: pd.Series         # number of open positions at each bar close
     exposure: pd.Series               # gross long exposure / equity at each bar close
+    breadth: pd.Series                # eligible members above their own trailing SMA
     frames: Dict[str, pd.DataFrame]   # per-ticker OHLC + signal frames (for charts)
     config: StrategyConfig
     portfolio: PortfolioConfig
@@ -207,6 +208,44 @@ class PortfolioEngine:
         union = pd.DatetimeIndex(sorted(set().union(*[f.index for f in frames.values()])))
         n = len(union)
         tickers = list(frames.keys())
+
+        breadth = np.full(n, np.nan, dtype=float)
+        breadth_eligible = np.ones(n, dtype=bool)
+        if pf.use_breadth_filter:
+            if pf.breadth_sma_period < 1:
+                raise ValueError("breadth_sma_period must be at least 1")
+            if not 0.0 <= pf.breadth_threshold_pct <= 100.0:
+                raise ValueError("breadth_threshold_pct must be between 0 and 100")
+
+            above_count = np.zeros(n, dtype=int)
+            eligible_count = np.zeros(n, dtype=int)
+            has_membership = all("_member" in frame.columns for frame in frames.values())
+            for frame in frames.values():
+                close = frame["close"].astype(float)
+                sma = close.rolling(
+                    pf.breadth_sma_period,
+                    min_periods=pf.breadth_sma_period,
+                ).mean()
+                if "_member" in frame.columns:
+                    member = frame["_member"].fillna(False).astype(bool)
+                else:
+                    # CSV/inline universes have no point-in-time membership
+                    # series.  In that case the loaded assets define the
+                    # breadth universe and this limitation is made explicit.
+                    member = pd.Series(True, index=frame.index)
+                eligible = member & close.notna() & sma.notna()
+                above = eligible & (close > sma)
+                eligible_count += eligible.reindex(union).fillna(False).to_numpy(dtype=bool)
+                above_count += above.reindex(union).fillna(False).to_numpy(dtype=bool)
+
+            valid = eligible_count > 0
+            breadth[valid] = above_count[valid] / eligible_count[valid]
+            breadth_eligible = valid & (breadth >= pf.breadth_threshold_pct / 100.0)
+            if not has_membership:
+                self.warnings.append(
+                    "Breadth calculado sobre o universo de ativos carregado; "
+                    "ative constituintes point-in-time para representar fielmente o índice histórico."
+                )
 
         # Pre-align every series onto the union index as numpy arrays.
         arr: Dict[str, dict] = {}
@@ -374,10 +413,13 @@ class PortfolioEngine:
 
             # --- 4. Evaluate ENTRY signals at this bar's close ------------------
             close_signals = []
+            allow_new_entries = bool(breadth_eligible[i])
             for t in tickers:
                 if not arr[t]["has_bar"][i] or t in positions or t in pending_entries:
                     continue
                 if not arr[t]["signal"][i]:
+                    continue
+                if not allow_new_entries:
                     continue
                 sig_range = float(arr[t]["high"][i] - arr[t]["low"][i])
                 sig_body_low = min(float(arr[t]["open"][i]), float(arr[t]["close"][i]))
@@ -482,6 +524,7 @@ class PortfolioEngine:
         equity_series = pd.Series(equity, index=union, name="equity")
         positions_series = pd.Series(n_open, index=union, name="open_positions")
         exposure_series = pd.Series(gross_exposure, index=union, name="gross_exposure")
+        breadth_series = pd.Series(breadth, index=union, name="market_breadth")
         trades_df = _trades_to_frame(trades)
         trades_df = add_period_mfe(trades_df, self.data_by_ticker)
 
@@ -497,6 +540,7 @@ class PortfolioEngine:
             equity_curve=equity_series,
             positions_open=positions_series,
             exposure=exposure_series,
+            breadth=breadth_series,
             frames=frames,
             config=cfg,
             portfolio=pf,

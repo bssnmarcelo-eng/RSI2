@@ -104,6 +104,9 @@ export type NorgateBacktestPayload = {
   };
   max_positions: number;
   pct_per_trade: number;
+  use_breadth_filter?: boolean;
+  breadth_sma_period?: number;
+  breadth_threshold_pct?: number;
 };
 
 export type FundamentalMetric = { token: string; label: string; unit: string; value: number | string | null; formatted: string; reference_date: string | null };

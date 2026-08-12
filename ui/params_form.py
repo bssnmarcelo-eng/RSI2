@@ -298,6 +298,29 @@ def _portfolio_tab() -> PortfolioConfig:
     cap = st.number_input("Max simultaneous positions (0 = unlimited)", min_value=0,
                           max_value=500, value=0, step=1, key="p_pf_maxpos")
 
+    st.markdown("#### Filtro de breadth")
+    use_breadth = st.checkbox(
+        "Permitir novas entradas somente com breadth suficiente",
+        value=True,
+        key="p_pf_use_breadth",
+        help=("Percentual dos constituintes elegíveis que fecham acima da própria média móvel. "
+              "O filtro não encerra posições já abertas."),
+    )
+    b1, b2 = st.columns(2)
+    breadth_period = b1.number_input(
+        "Período da média (barras)", min_value=2, max_value=500,
+        value=40, step=1, key="p_pf_breadth_period", disabled=not use_breadth,
+    )
+    breadth_threshold = b2.number_input(
+        "Breadth mínimo (%)", min_value=0.0, max_value=100.0,
+        value=50.0, step=1.0, key="p_pf_breadth_threshold", disabled=not use_breadth,
+    )
+    if use_breadth:
+        st.caption(
+            "Configuração inicial recomendada: pelo menos 50% dos constituintes acima da MM40. "
+            "Com Norgate, ative a restrição point-in-time para usar a composição histórica exata."
+        )
+
     if sizing_label.startswith("Capital integral"):
         st.warning(
             "⚠️ Margem ilimitada: cada sinal aloca **100% do patrimônio**. A exposição "
@@ -306,7 +329,10 @@ def _portfolio_tab() -> PortfolioConfig:
         return PortfolioConfig(
             initial_capital=float(initial_capital),
             sizing_mode=PortfolioSizing.FULL_EQUITY,
-            allow_fractional=bool(allow_fractional))
+            allow_fractional=bool(allow_fractional),
+            use_breadth_filter=bool(use_breadth),
+            breadth_sma_period=int(breadth_period),
+            breadth_threshold_pct=float(breadth_threshold))
 
     st.caption(
         f"Up to ~{int((leverage * 100) // pct_per_trade) if pct_per_trade else 0} positions fit at "
@@ -314,7 +340,10 @@ def _portfolio_tab() -> PortfolioConfig:
     return PortfolioConfig(
         initial_capital=float(initial_capital), sizing_mode=PortfolioSizing.PERCENT,
         pct_per_trade=float(pct_per_trade), leverage=float(leverage),
-        max_positions=int(cap), allow_fractional=bool(allow_fractional))
+        max_positions=int(cap), allow_fractional=bool(allow_fractional),
+        use_breadth_filter=bool(use_breadth),
+        breadth_sma_period=int(breadth_period),
+        breadth_threshold_pct=float(breadth_threshold))
 
 
 def configuration_form(mode: str, *, with_run: bool):

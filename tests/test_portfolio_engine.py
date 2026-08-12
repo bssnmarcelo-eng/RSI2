@@ -192,3 +192,63 @@ def test_margin_interest_accrues_on_negative_cash(monkeypatch):
 
     assert result.financing_costs == pytest.approx(10.0)
     assert result.equity_curve.iloc[-1] == pytest.approx(9_990.0)
+
+
+def test_breadth_filter_allows_entries_at_exact_threshold(monkeypatch):
+    _identity_signal_builder(monkeypatch)
+    dates = pd.date_range("2024-01-01", periods=4, freq="D")
+    leader = _frame(dates, [100, 110, 110, 110], signal_at=1)
+    laggard = _frame(dates, [100, 90, 90, 90])
+    leader["_member"] = True
+    laggard["_member"] = True
+    pf = _portfolio(
+        use_breadth_filter=True,
+        breadth_sma_period=2,
+        breadth_threshold_pct=50.0,
+    )
+
+    result = PortfolioEngine({"LEAD": leader, "LAG": laggard}, make_config(), pf).run()
+
+    assert result.breadth.loc[dates[1]] == pytest.approx(0.5)
+    assert len(result.trades) == 1
+    assert result.trades.iloc[0]["ticker"] == "LEAD"
+
+
+def test_breadth_filter_blocks_new_entry_below_threshold(monkeypatch):
+    _identity_signal_builder(monkeypatch)
+    dates = pd.date_range("2024-01-01", periods=4, freq="D")
+    leader = _frame(dates, [100, 110, 110, 110], signal_at=1)
+    laggard = _frame(dates, [100, 90, 90, 90])
+    leader["_member"] = True
+    laggard["_member"] = True
+    pf = _portfolio(
+        use_breadth_filter=True,
+        breadth_sma_period=2,
+        breadth_threshold_pct=51.0,
+    )
+
+    result = PortfolioEngine({"LEAD": leader, "LAG": laggard}, make_config(), pf).run()
+
+    assert result.breadth.loc[dates[1]] == pytest.approx(0.5)
+    assert result.trades.empty
+
+
+def test_breadth_uses_only_point_in_time_members(monkeypatch):
+    _identity_signal_builder(monkeypatch)
+    dates = pd.date_range("2024-01-01", periods=4, freq="D")
+    leader = _frame(dates, [100, 110, 110, 110], signal_at=1)
+    former_member = _frame(dates, [100, 90, 90, 90])
+    leader["_member"] = True
+    former_member["_member"] = False
+    pf = _portfolio(
+        use_breadth_filter=True,
+        breadth_sma_period=2,
+        breadth_threshold_pct=100.0,
+    )
+
+    result = PortfolioEngine(
+        {"LEAD": leader, "FORMER": former_member}, make_config(), pf
+    ).run()
+
+    assert result.breadth.loc[dates[1]] == pytest.approx(1.0)
+    assert len(result.trades) == 1

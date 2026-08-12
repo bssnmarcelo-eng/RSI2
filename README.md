@@ -59,6 +59,13 @@ A long **setup** is confirmed at a candle's **close** when **both** conditions h
   power (plus an optional hard cap). When more signals fire on a bar than there
   is buying power for, the **most oversold names (lowest RSI) are filled first**.
 
+  The optional **market-breadth filter** blocks new entries unless a configurable
+  percentage of eligible constituents closes above its own trailing SMA. The
+  initial profile uses **Breadth ≥ 50% above SMA(40)**. Existing positions are
+  never liquidated by this gate. For Norgate index research, the UI requires the
+  complete collection and point-in-time constituent masks so historical breadth
+  is not calculated from today's membership.
+
   Load data either as **one CSV containing many tickers** (via a `ticker`/`symbol`
   column) or as **several single-ticker CSVs at once** (the ticker is inferred
   from each filename). Results include the combined equity curve and drawdown,

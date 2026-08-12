@@ -25,6 +25,12 @@ def _render_portfolio_results() -> None:
     if meta:
         st.caption(f"Resultados de **{meta['n_assets']}** ativos "
                    f"({meta['start']} → {meta['end']}).")
+    if res.portfolio.use_breadth_filter:
+        st.info(
+            f"Filtro ativo: novas entradas exigem breadth ≥ "
+            f"{res.portfolio.breadth_threshold_pct:g}% acima da "
+            f"MM{res.portfolio.breadth_sma_period}. Posições abertas não são encerradas pelo filtro."
+        )
     tab_sum, tab_charts, tab_log = st.tabs(["Resumo", "Gráficos e ativos", "Operações"])
     with tab_sum:
         render_portfolio_metrics(st.session_state["_portfolio_metrics"], res)
@@ -43,7 +49,12 @@ def run_portfolio_mode(note: str = "", data_src: dict | None = None):
     _pf_sig = None
     with data_box:
         st.subheader("📥 Dados")
-        pending = collect_multi_asset_data(cfg, "Ativos da carteira", data_src)
+        pending = collect_multi_asset_data(
+            cfg,
+            "Ativos da carteira",
+            data_src,
+            breadth_filter=pconf.use_breadth_filter,
+        )
         is_pending = isinstance(pending, dict) and pending.get("_pending")
         if pending is not None and not is_pending:
             data_by_ticker = pending
@@ -74,6 +85,14 @@ def run_portfolio_mode(note: str = "", data_src: dict | None = None):
 
     if submitted and pending is not None:
         _bar = st.progress(0.0, text="Preparando sinais…")
+        if (is_pending and pconf.use_breadth_filter
+                and (not pending.get("restrict") or not pending.get("complete_universe"))):
+            _bar.empty()
+            st.error(
+                "Para calcular o breadth do índice corretamente, selecione a coleção inteira "
+                "e ative os constituintes históricos point-in-time."
+            )
+            return
         if is_pending:
             resolved = _resolve_norgate_pending(pending, cfg)
             if resolved is not None:
@@ -106,7 +125,9 @@ def run_portfolio_mode(note: str = "", data_src: dict | None = None):
             st.session_state["_portfolio_meta"] = {
                 "n_assets": len(tickers), "start": str(eq.index.min().date()),
                 "end": str(eq.index.max().date())}
-            positions = pd.concat([result.positions_open, result.exposure], axis=1)
+            positions = pd.concat(
+                [result.positions_open, result.exposure, result.breadth], axis=1
+            )
             save_to_log(
                 "Portfolio",
                 summary={"note": note, "tickers": ", ".join(tickers), "n_assets": len(tickers),

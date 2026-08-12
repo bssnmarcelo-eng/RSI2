@@ -209,6 +209,9 @@ def _run_frames(run_id: str, request, frames: dict[str, pd.DataFrame], progress_
             initial_capital=cfg.initial_capital,
             pct_per_trade=request.pct_per_trade,
             max_positions=request.max_positions,
+            use_breadth_filter=request.use_breadth_filter,
+            breadth_sma_period=request.breadth_sma_period,
+            breadth_threshold_pct=request.breadth_threshold_pct,
         )
         return PortfolioEngine(
             frames, cfg, portfolio, option_data_by_ticker=option_frames
@@ -328,6 +331,9 @@ def _execute_norgate(run_id: str, request: NorgateBacktestRequest) -> None:
             "start_date": request.start_date.isoformat(),
             "end_date": request.end_date.isoformat(),
             "point_in_time": request.restrict_to_index,
+            "breadth_filter": request.use_breadth_filter,
+            "breadth_sma_period": request.breadth_sma_period,
+            "breadth_threshold_pct": request.breadth_threshold_pct,
             "instrument": request.strategy.instrument,
             "option_model": request.strategy.options.pricing_model,
             "option_pricing_frequency": ("Diário" if option_frames is not None else ""),

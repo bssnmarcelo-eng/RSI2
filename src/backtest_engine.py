@@ -75,7 +75,7 @@ def build_signal_frame(data: pd.DataFrame, config: StrategyConfig) -> pd.DataFra
     Shared by both the single-asset and the portfolio engines so the signal
     definition stays identical across modes.
     """
-    optional = [c for c in ["volume", "dividend", "split"] if c in data.columns]
+    optional = [c for c in ["volume", "dividend", "split", "_member"] if c in data.columns]
     df = data[["open", "high", "low", "close", *optional]].copy()
     df["rsi"] = indicators.rsi(df["close"], config.rsi_period)
 

@@ -229,6 +229,14 @@ class PortfolioConfig:
     max_positions: int = 0            # hard cap on concurrent positions; 0 = no cap (PERCENT mode)
     allow_fractional: bool = True     # fractional shares keep portfolio math exact
 
+    # Market-breadth entry gate.  At each signal close, calculate the share of
+    # eligible constituents whose close is above their own trailing SMA.  New
+    # entries are allowed only when that share meets the threshold; open
+    # positions remain governed exclusively by the configured exit rules.
+    use_breadth_filter: bool = False
+    breadth_sma_period: int = 40
+    breadth_threshold_pct: float = 50.0
+
 
 @dataclass
 class StrategyConfig:
