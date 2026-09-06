@@ -71,6 +71,11 @@ A long **setup** is confirmed at a candle's **close** when **both** conditions h
   from each filename). Results include the combined equity curve and drawdown,
   open-positions-over-time, per-ticker P&L contribution, a per-ticker breakdown
   table, and a per-asset price/RSI drill-down.
+- **Experimental high-precision filter** — gate simultaneous candidates by
+  short-term trend and cross-sectional candle-range percentile using only data
+  known at the signal close. It is disabled by default; see
+  [`docs/analise-backtest-20260906-174817-698.md`](docs/analise-backtest-20260906-174817-698.md)
+  for the research results and limitations.
 
 ### Execution (no look-ahead bias)
 

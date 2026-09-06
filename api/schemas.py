@@ -101,6 +101,10 @@ class BacktestRequest(BaseModel):
         "strongest_trend", "highest_volatility",
     ] = "lowest_rsi"
     ranking_lookback: int = Field(default=20, ge=2, le=500)
+    use_trade_quality_filter: bool = False
+    quality_trend_period: int = Field(default=10, ge=2, le=500)
+    quality_min_trend_pct: float = Field(default=-3.0, ge=-100, le=1_000)
+    quality_max_range_rank_pct: float = Field(default=10.0, gt=0, le=100)
     use_breadth_filter: bool = False
     breadth_sma_period: int = Field(default=40, ge=2, le=500)
     breadth_threshold_pct: float = Field(default=50, ge=0, le=100)
@@ -153,6 +157,10 @@ class NorgateBacktestRequest(BaseModel):
         "strongest_trend", "highest_volatility",
     ] = "lowest_rsi"
     ranking_lookback: int = Field(default=20, ge=2, le=500)
+    use_trade_quality_filter: bool = False
+    quality_trend_period: int = Field(default=10, ge=2, le=500)
+    quality_min_trend_pct: float = Field(default=-3.0, ge=-100, le=1_000)
+    quality_max_range_rank_pct: float = Field(default=10.0, gt=0, le=100)
     use_breadth_filter: bool = False
     breadth_sma_period: int = Field(default=40, ge=2, le=500)
     breadth_threshold_pct: float = Field(default=50, ge=0, le=100)

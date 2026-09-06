@@ -20,12 +20,16 @@ def select_trades_per_entry_date(
     trend and volatility are calculated at the signal close using trailing data
     only.  Temporary ranking columns are removed from the returned trade log.
     """
-    if trades.empty or selection.max_entries_per_date == 0:
+    if trades.empty:
         return trades.copy()
     if selection.max_entries_per_date < 0:
         raise ValueError("max_entries_per_date must be zero or greater")
     if selection.ranking_lookback < 2:
         raise ValueError("ranking_lookback must be at least 2")
+    if selection.quality_trend_period < 2:
+        raise ValueError("quality_trend_period must be at least 2")
+    if not 0.0 < selection.quality_max_range_rank_pct <= 100.0:
+        raise ValueError("quality_max_range_rank_pct must be between 0 and 100")
 
     work = trades.copy()
     metric_by_ticker: dict[str, pd.DataFrame] = {}
@@ -36,6 +40,13 @@ def select_trades_per_entry_date(
         average = close.rolling(lookback, min_periods=lookback).mean()
         metrics = pd.DataFrame(index=frame.index)
         metrics["trend"] = (close / average).replace([np.inf, -np.inf], np.nan)
+        quality_average = close.rolling(
+            selection.quality_trend_period,
+            min_periods=selection.quality_trend_period,
+        ).mean()
+        metrics["quality_trend"] = (close / quality_average - 1.0).replace(
+            [np.inf, -np.inf], np.nan
+        )
         metrics["volatility"] = close.pct_change(fill_method=None).rolling(
             lookback, min_periods=lookback
         ).std()
@@ -52,6 +63,7 @@ def select_trades_per_entry_date(
     trend = []
     volatility = []
     relative_volume = []
+    quality_trend = []
     for row in work.itertuples(index=False):
         metrics = metric_by_ticker.get(str(row.ticker))
         signal_date = pd.Timestamp(row.signal_date)
@@ -59,15 +71,39 @@ def select_trades_per_entry_date(
             trend.append(np.nan)
             volatility.append(np.nan)
             relative_volume.append(np.nan)
+            quality_trend.append(np.nan)
             continue
         values = metrics.loc[signal_date]
         trend.append(float(values["trend"]))
         volatility.append(float(values["volatility"]))
         relative_volume.append(float(values["relative_volume"]))
+        quality_trend.append(float(values["quality_trend"]))
 
     work["_rank_trend"] = trend
     work["_rank_volatility"] = volatility
     work["_rank_relative_volume"] = relative_volume
+    work["_quality_trend"] = quality_trend
+    work["_entry_date"] = pd.to_datetime(work["entry_date"])
+
+    if selection.use_trade_quality_filter:
+        signal_close = pd.to_numeric(work["signal_close"], errors="coerce")
+        signal_range = pd.to_numeric(work["signal_range"], errors="coerce")
+        work["_quality_range_pct"] = (signal_range / signal_close).replace(
+            [np.inf, -np.inf], np.nan
+        )
+        work["_quality_range_rank"] = work.groupby("_entry_date")[
+            "_quality_range_pct"
+        ].rank(method="average", pct=True)
+        quality_mask = (
+            work["_quality_trend"].ge(selection.quality_min_trend_pct / 100.0)
+            & work["_quality_range_rank"].le(
+                selection.quality_max_range_rank_pct / 100.0
+            )
+        )
+        work = work.loc[quality_mask].copy()
+
+    if selection.max_entries_per_date == 0:
+        return work.loc[:, trades.columns].sort_values("entry_date").reset_index(drop=True)
 
     ranking = selection.entry_ranking
     if not isinstance(ranking, PortfolioEntryRanking):
@@ -81,7 +117,6 @@ def select_trades_per_entry_date(
     }
     field, ascending = rank_fields[ranking]
     work["_rank_missing"] = pd.to_numeric(work[field], errors="coerce").isna()
-    work["_entry_date"] = pd.to_datetime(work["entry_date"])
     work = work.sort_values(
         ["_entry_date", "_rank_missing", field, "ticker"],
         ascending=[True, True, ascending, True],

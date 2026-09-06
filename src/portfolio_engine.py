@@ -209,6 +209,10 @@ class PortfolioEngine:
             raise ValueError("max_entries_per_date must be zero or greater")
         if pf.ranking_lookback < 2:
             raise ValueError("ranking_lookback must be at least 2")
+        if pf.quality_trend_period < 2:
+            raise ValueError("quality_trend_period must be at least 2")
+        if not 0.0 < pf.quality_max_range_rank_pct <= 100.0:
+            raise ValueError("quality_max_range_rank_pct must be between 0 and 100")
 
         # Cross-sectional ranking inputs.  Every value at bar i uses only data
         # available through that bar's close, so selection remains causal.
@@ -217,6 +221,13 @@ class PortfolioEngine:
             close = frame["close"].astype(float)
             trend_sma = close.rolling(lookback, min_periods=lookback).mean()
             frame["rank_trend"] = (close / trend_sma).replace([np.inf, -np.inf], np.nan)
+            quality_sma = close.rolling(
+                pf.quality_trend_period,
+                min_periods=pf.quality_trend_period,
+            ).mean()
+            frame["quality_trend"] = (close / quality_sma - 1.0).replace(
+                [np.inf, -np.inf], np.nan
+            )
             frame["rank_volatility"] = close.pct_change(fill_method=None).rolling(
                 lookback, min_periods=lookback
             ).std()
@@ -290,6 +301,7 @@ class PortfolioEngine:
                 "sma": f["sma_exit"].reindex(union).to_numpy(dtype=float),
                 "atr_mult": f["atr_mult"].reindex(union).to_numpy(dtype=float),
                 "rank_trend": f["rank_trend"].reindex(union).to_numpy(dtype=float),
+                "quality_trend": f["quality_trend"].reindex(union).to_numpy(dtype=float),
                 "rank_volatility": f["rank_volatility"].reindex(union).to_numpy(dtype=float),
                 "rank_relative_volume": f["rank_relative_volume"].reindex(union).to_numpy(dtype=float),
                 "signal": f["entry_signal"].reindex(union).fillna(False).to_numpy(dtype=bool),
@@ -463,6 +475,11 @@ class PortfolioEngine:
                     "signal_atr_mult": sig_atr_mult,
                     "rsi_at_signal": float(arr[t]["rsi"][i]),
                     "rank_trend": float(arr[t]["rank_trend"][i]),
+                    "quality_trend": float(arr[t]["quality_trend"][i]),
+                    "signal_range_pct": (
+                        sig_range / float(arr[t]["close"][i])
+                        if float(arr[t]["close"][i]) > 0 else float("nan")
+                    ),
                     "rank_volatility": float(arr[t]["rank_volatility"][i]),
                     "rank_relative_volume": float(arr[t]["rank_relative_volume"][i]),
                     "pattern": str(arr[t]["pattern"][i]),
@@ -600,6 +617,20 @@ class PortfolioEngine:
         """
         pf = self.portfolio
         full_equity = pf.sizing_mode == PortfolioSizing.FULL_EQUITY
+
+        if pf.use_trade_quality_filter and candidates:
+            range_pct = pd.Series(
+                {ticker: meta.get("signal_range_pct", np.nan) for ticker, meta in candidates},
+                dtype=float,
+            )
+            range_rank = range_pct.rank(method="average", pct=True)
+            candidates = [
+                (ticker, meta) for ticker, meta in candidates
+                if np.isfinite(float(meta.get("quality_trend", np.nan)))
+                and float(meta["quality_trend"]) >= pf.quality_min_trend_pct / 100.0
+                and float(range_rank.get(ticker, np.nan))
+                <= pf.quality_max_range_rank_pct / 100.0
+            ]
         ranking = pf.entry_ranking
         if not isinstance(ranking, PortfolioEntryRanking):
             ranking = PortfolioEntryRanking(ranking)

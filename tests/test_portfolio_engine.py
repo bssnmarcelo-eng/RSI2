@@ -235,6 +235,30 @@ def test_largest_hammer_atr_can_override_lowest_rsi(monkeypatch):
     assert result.trades["ticker"].tolist() == ["AAA"]
 
 
+def test_trade_quality_filter_uses_signal_range_rank_and_short_trend(monkeypatch):
+    _identity_signal_builder(monkeypatch)
+    dates = pd.date_range("2024-01-05", periods=12, freq="W-FRI")
+    frames = {}
+    for number in range(1, 11):
+        ticker = f"T{number:02d}"
+        frame = _frame(dates, [100.0] * 11 + [103.0], signal_at=10)
+        frame.loc[dates[10], "high"] = 100.0 + number / 2
+        frame.loc[dates[10], "low"] = 100.0 - number / 2
+        frames[ticker] = frame
+    pf = _portfolio(
+        pct_per_trade=10.0,
+        max_entries_per_date=100,
+        use_trade_quality_filter=True,
+        quality_trend_period=10,
+        quality_min_trend_pct=-3.0,
+        quality_max_range_rank_pct=10.0,
+    )
+
+    result = PortfolioEngine(frames, make_config(), pf).run()
+
+    assert result.trades["ticker"].tolist() == ["T01"]
+
+
 def test_breadth_filter_allows_entries_at_exact_threshold(monkeypatch):
     _identity_signal_builder(monkeypatch)
     dates = pd.date_range("2024-01-01", periods=4, freq="D")

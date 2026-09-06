@@ -79,3 +79,62 @@ def test_per_asset_relative_volume_ranking_uses_signal_close_only():
     selected = select_trades_per_entry_date(_trades(dates), results, selection)
 
     assert selected["ticker"].tolist() == ["BBB"]
+
+
+def test_trade_quality_filter_keeps_lowest_range_decile_above_short_trend_floor():
+    dates = pd.date_range("2024-01-05", periods=12, freq="W-FRI")
+    results = {}
+    rows = []
+    for number in range(1, 11):
+        ticker = f"T{number:02d}"
+        results[ticker] = _result(dates, [100.0] * 12, [100.0] * 12)
+        rows.append({
+            "ticker": ticker,
+            "signal_date": dates[10],
+            "entry_date": dates[11],
+            "signal_close": 100.0,
+            "signal_range": float(number),
+            "rsi_at_signal": float(number),
+            "signal_atr_mult": 1.0,
+        })
+    selection = EntrySelectionConfig(
+        max_entries_per_date=100,
+        use_trade_quality_filter=True,
+        quality_trend_period=10,
+        quality_min_trend_pct=-3.0,
+        quality_max_range_rank_pct=10.0,
+    )
+
+    selected = select_trades_per_entry_date(pd.DataFrame(rows), results, selection)
+
+    assert selected["ticker"].tolist() == ["T01"]
+
+
+def test_trade_quality_filter_does_not_promote_next_range_after_trend_rejection():
+    dates = pd.date_range("2024-01-05", periods=12, freq="W-FRI")
+    results = {}
+    rows = []
+    for number in range(1, 11):
+        ticker = f"T{number:02d}"
+        closes = [100.0] * 10 + ([80.0, 80.0] if number == 1 else [100.0, 100.0])
+        results[ticker] = _result(dates, closes, [100.0] * 12)
+        rows.append({
+            "ticker": ticker,
+            "signal_date": dates[10],
+            "entry_date": dates[11],
+            "signal_close": closes[10],
+            "signal_range": float(number),
+            "rsi_at_signal": float(number),
+            "signal_atr_mult": 1.0,
+        })
+    selection = EntrySelectionConfig(
+        max_entries_per_date=100,
+        use_trade_quality_filter=True,
+        quality_trend_period=10,
+        quality_min_trend_pct=-3.0,
+        quality_max_range_rank_pct=10.0,
+    )
+
+    selected = select_trades_per_entry_date(pd.DataFrame(rows), results, selection)
+
+    assert selected.empty

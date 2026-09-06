@@ -339,6 +339,36 @@ def _portfolio_tab() -> PortfolioConfig:
         "Empates são resolvidos pelo ticker em ordem alfabética."
     )
 
+    st.markdown("#### Filtro estatístico de alta precisão (experimental)")
+    use_quality_filter = st.checkbox(
+        "Filtrar por tendência curta e amplitude relativa entre candidatos",
+        value=False,
+        key="p_pf_use_trade_quality_filter",
+        help=("Mantém somente sinais acima do limite relativo à MM curta e entre os candles "
+              "de menor amplitude percentual na mesma data. Usa apenas dados do fechamento do sinal."),
+    )
+    q1, q2, q3 = st.columns(3)
+    quality_period = q1.number_input(
+        "Período da MM", min_value=2, max_value=260, value=10, step=1,
+        key="p_pf_quality_trend_period", disabled=not use_quality_filter,
+    )
+    quality_min_trend = q2.number_input(
+        "Distância mínima da MM (%)", min_value=-100.0, max_value=100.0,
+        value=-3.0, step=0.5, key="p_pf_quality_min_trend",
+        disabled=not use_quality_filter,
+    )
+    quality_range_rank = q3.number_input(
+        "Percentil máximo de amplitude (%)", min_value=0.1, max_value=100.0,
+        value=10.0, step=0.5, key="p_pf_quality_range_rank",
+        disabled=not use_quality_filter,
+    )
+    if use_quality_filter:
+        st.caption(
+            "Configuração pesquisada no backtest 20260906-174817-698: MM10, −3% e "
+            "10%. O resultado histórico de 100% ocorreu em apenas 49 operações e não "
+            "garante 100% no futuro."
+        )
+
     st.markdown("#### Filtro de breadth")
     use_breadth = st.checkbox(
         "Permitir novas entradas somente com breadth suficiente",
@@ -374,6 +404,10 @@ def _portfolio_tab() -> PortfolioConfig:
             max_entries_per_date=int(max_entries_per_date),
             entry_ranking=ranking_labels[ranking_label],
             ranking_lookback=int(ranking_lookback),
+            use_trade_quality_filter=bool(use_quality_filter),
+            quality_trend_period=int(quality_period),
+            quality_min_trend_pct=float(quality_min_trend),
+            quality_max_range_rank_pct=float(quality_range_rank),
             use_breadth_filter=bool(use_breadth),
             breadth_sma_period=int(breadth_period),
             breadth_threshold_pct=float(breadth_threshold))
@@ -389,6 +423,10 @@ def _portfolio_tab() -> PortfolioConfig:
         max_entries_per_date=int(max_entries_per_date),
         entry_ranking=ranking_labels[ranking_label],
         ranking_lookback=int(ranking_lookback),
+        use_trade_quality_filter=bool(use_quality_filter),
+        quality_trend_period=int(quality_period),
+        quality_min_trend_pct=float(quality_min_trend),
+        quality_max_range_rank_pct=float(quality_range_rank),
         use_breadth_filter=bool(use_breadth),
         breadth_sma_period=int(breadth_period),
         breadth_threshold_pct=float(breadth_threshold))
@@ -433,10 +471,41 @@ def _per_asset_selection_tab() -> EntrySelectionConfig:
         "O limite é aplicado ao consolidado de operações independentes. "
         "Empates são resolvidos pelo ticker em ordem alfabética."
     )
+    use_quality_filter = st.checkbox(
+        "Filtro experimental de alta precisão",
+        value=False,
+        key="pa_use_trade_quality_filter",
+        help=("Combina distância para a média curta com o percentil de amplitude "
+              "dos sinais da mesma data. Usa somente informação disponível no sinal."),
+    )
+    q1, q2, q3 = st.columns(3)
+    quality_period = q1.number_input(
+        "Período da MM", min_value=2, max_value=260, value=10, step=1,
+        key="pa_quality_trend_period", disabled=not use_quality_filter,
+    )
+    quality_min_trend = q2.number_input(
+        "Distância mínima da MM (%)", min_value=-100.0, max_value=100.0,
+        value=-3.0, step=0.5, key="pa_quality_min_trend",
+        disabled=not use_quality_filter,
+    )
+    quality_range_rank = q3.number_input(
+        "Percentil máximo de amplitude (%)", min_value=0.1, max_value=100.0,
+        value=10.0, step=0.5, key="pa_quality_range_rank",
+        disabled=not use_quality_filter,
+    )
+    if use_quality_filter:
+        st.caption(
+            "MM10 / −3% / 10% produziu 49 acertos em 49 ocorrências no estudo salvo em "
+            "docs; a amostra é pequena e não oferece garantia futura."
+        )
     return EntrySelectionConfig(
         max_entries_per_date=int(max_entries),
         entry_ranking=labels[ranking_label],
         ranking_lookback=int(lookback),
+        use_trade_quality_filter=bool(use_quality_filter),
+        quality_trend_period=int(quality_period),
+        quality_min_trend_pct=float(quality_min_trend),
+        quality_max_range_rank_pct=float(quality_range_rank),
     )
 
 
