@@ -1,4 +1,2 @@
--r requirements.txt
-yfinance>=0.2.40
-lxml>=5.0
-requests>=2.27
+-r requirements-norgate.txt
+# O screening usa a base local Norgate para universo e preços.

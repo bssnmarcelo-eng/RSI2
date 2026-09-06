@@ -8,6 +8,8 @@ import streamlit as st
 
 from src import logger
 from src.backtest_engine import BacktestEngine
+from src.entry_selection import select_trades_per_entry_date
+from src.types import PortfolioEntryRanking
 from src.utils import fmt_money
 from ui.data_source import _resolve_norgate_pending, collect_multi_asset_data
 from ui.params_form import configuration_form
@@ -17,7 +19,7 @@ from ui.run_logging import save_to_log
 
 def run_per_asset_mode(note: str = "", data_src: dict | None = None):
     data_box = st.container()
-    cfg, _pconf, submitted = configuration_form("per_asset", with_run=True)
+    cfg, selection, submitted = configuration_form("per_asset", with_run=True)
 
     with data_box:
         st.subheader("📥 Dados")
@@ -69,11 +71,17 @@ def run_per_asset_mode(note: str = "", data_src: dict | None = None):
                 columns=["ticker", "signal_date", "rsi_at_signal", "pattern", "entry_date",
                          "entry_price", "exit_date", "exit_price", "exit_reason", "bars_held",
                          "gross_return", "net_return", "pnl"])
+            combined = select_trades_per_entry_date(combined, results_by_ticker, selection)
+            _bar.progress(
+                1.0,
+                text=f"Concluído! {_total} ativos · {len(combined)} operações selecionadas",
+            )
 
             # Persist so reruns triggered by row-clicks can still render everything.
             st.session_state["_per_asset_results"] = results_by_ticker
             st.session_state["_per_asset_combined"] = combined
             st.session_state["_per_asset_n"] = len(data_by_ticker)
+            st.session_state["_per_asset_selection"] = selection
 
             stats = aggregate_trade_stats(combined) if not combined.empty else {}
             starts = [d.index.min() for d in data_by_ticker.values()]
@@ -92,13 +100,25 @@ def run_per_asset_mode(note: str = "", data_src: dict | None = None):
                 tables={"all_operations": combined},
                 full={"meta": {"tickers": sorted(data_by_ticker.keys()), "n_assets": len(data_by_ticker),
                                "start": str(min(starts).date()), "end": str(max(ends).date())},
-                      "config": logger.config_dict(cfg), "metrics": stats})
+                      "config": logger.config_dict(cfg, selection), "metrics": stats})
     elif submitted and pending is None:
         st.warning("Carregue os dados antes de rodar (seção 📥 Dados acima).")
 
     # Always render from session_state — survives every rerun (row clicks, sort changes, etc).
     if "_per_asset_combined" in st.session_state:
         st.markdown("---")
+        active_selection = st.session_state.get("_per_asset_selection", selection)
+        ranking_names = {
+            PortfolioEntryRanking.LOWEST_RSI: "menor RSI(2)",
+            PortfolioEntryRanking.LARGEST_HAMMER_ATR: "maior Hammer em ATR",
+            PortfolioEntryRanking.HIGHEST_RELATIVE_VOLUME: "maior volume relativo",
+            PortfolioEntryRanking.STRONGEST_TREND: "tendência mais forte",
+            PortfolioEntryRanking.HIGHEST_VOLATILITY: "maior volatilidade",
+        }
+        st.info(
+            f"Seleção aplicada: no máximo {active_selection.max_entries_per_date} operação(ões) "
+            f"por data, priorizando {ranking_names[active_selection.entry_ranking]}."
+        )
         render_trades_overview(
             st.session_state["_per_asset_combined"],
             st.session_state.get("_per_asset_n", 0),

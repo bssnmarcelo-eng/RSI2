@@ -52,7 +52,7 @@ def _ng_symbol_list(collection_type: str, collection_name: str) -> list[str]:
     return _ng_database_symbols(collection_name)
 
 
-def _ng_collection_ui(key_prefix: str) -> tuple[str, str]:
+def _ng_collection_ui(key_prefix: str, *, default_restrict: bool = False) -> tuple[str, str]:
     """Render watchlist/database picker; return (collection_type, collection_name)."""
     ctype = st.radio(
         "Tipo de coleção",
@@ -86,7 +86,7 @@ def _ng_collection_ui(key_prefix: str) -> tuple[str, str]:
     # tables gain a column with the membership periods.
     restrict = st.checkbox(
         "Restringir trades aos constituintes históricos do índice (point-in-time)",
-        value=False, key=f"{key_prefix}_restrict",
+        value=default_restrict, key=f"{key_prefix}_restrict",
         help="Só permite entradas enquanto o ativo fazia parte do índice selecionado, "
              "evitando viés de antecipação (ex.: operar AMZN no Dow Jones antes de 2024-02). "
              "Faz 1 consulta Norgate por ativo — pode demorar em universos grandes.")
@@ -131,7 +131,13 @@ def _ng_date_range_ui(key_prefix: str):
     return str(start), str(end)
 
 
-def collect_norgate_multi(cfg: StrategyConfig, data_src: dict, select_label: str):
+def collect_norgate_multi(
+    cfg: StrategyConfig,
+    data_src: dict,
+    select_label: str,
+    *,
+    breadth_filter: bool = False,
+):
     """Norgate data-loading UI for multi-asset modes.
 
     Returns data_by_ticker dict or None if not ready.
@@ -141,7 +147,7 @@ def collect_norgate_multi(cfg: StrategyConfig, data_src: dict, select_label: str
         return None
 
     st.header("1 · Selecionar ativos")
-    ctype, cname = _ng_collection_ui("ng_multi")
+    ctype, cname = _ng_collection_ui("ng_multi", default_restrict=breadth_filter)
     if not cname:
         return None
 
@@ -157,7 +163,7 @@ def collect_norgate_multi(cfg: StrategyConfig, data_src: dict, select_label: str
     )
     select_all = st.checkbox(
         f"Selecionar todos os {len(all_symbols)} ativos",
-        value=False, key="ng_multi_all")
+        value=breadth_filter, key="ng_multi_all")
     if select_all:
         selected = all_symbols
         st.caption(f"✅ Todos os **{len(all_symbols)}** ativos selecionados.")
@@ -186,7 +192,8 @@ def collect_norgate_multi(cfg: StrategyConfig, data_src: dict, select_label: str
             "end": end_str, "adjustment": data_src["adjustment"],
             "frequency": data_src.get("frequency", "Semanal"),
             "index_name": st.session_state.get("_ng_index_name"),
-            "restrict": bool(st.session_state.get("_ng_restrict"))}
+            "restrict": bool(st.session_state.get("_ng_restrict")),
+            "complete_universe": bool(select_all)}
 
 
 def load_combined(uploaded):
@@ -216,6 +223,8 @@ def collect_multi_asset_data(
     cfg: StrategyConfig,
     select_label: str,
     data_src: dict | None = None,
+    *,
+    breadth_filter: bool = False,
 ):
     """Shared steps 1–2 for multi-asset modes: load data, pick tickers, date range.
 
@@ -226,7 +235,9 @@ def collect_multi_asset_data(
 
     # ── Norgate path ──────────────────────────────────────────────────────────
     if data_src["source"] == "Norgate Data":
-        pending = collect_norgate_multi(cfg, data_src, select_label)
+        pending = collect_norgate_multi(
+            cfg, data_src, select_label, breadth_filter=breadth_filter
+        )
         if pending is None:
             return None
 

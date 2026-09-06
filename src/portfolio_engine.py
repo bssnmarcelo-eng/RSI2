@@ -12,8 +12,8 @@ Capital model (IBKR-style margin)
 * Each new position is sized at ``pct_per_trade`` percent of current equity
   (notional). The number of simultaneous positions is therefore limited
   naturally by available buying power (and optionally a hard ``max_positions``).
-* When more entry signals fire on a bar than there is buying power for, the most
-  oversold names (lowest RSI at the signal) are filled first.
+* When several signals target the same entry date, a causal cross-sectional
+  ranking admits only the configured number of candidates (one by default).
 
 No look-ahead bias
 ------------------
@@ -35,6 +35,7 @@ from .types import (
     Execution,
     InstrumentType,
     PortfolioConfig,
+    PortfolioEntryRanking,
     PortfolioSizing,
     StrategyConfig,
     Trade,
@@ -72,6 +73,7 @@ class PortfolioResult:
     equity_curve: pd.Series           # combined portfolio equity at each bar close
     positions_open: pd.Series         # number of open positions at each bar close
     exposure: pd.Series               # gross long exposure / equity at each bar close
+    breadth: pd.Series                # eligible members above their own trailing SMA
     frames: Dict[str, pd.DataFrame]   # per-ticker OHLC + signal frames (for charts)
     config: StrategyConfig
     portfolio: PortfolioConfig
@@ -203,10 +205,83 @@ class PortfolioEngine:
         # Build causal signal frames per ticker.
         frames = {t: build_signal_frame(df, cfg) for t, df in self.data_by_ticker.items()}
 
+        if pf.max_entries_per_date < 0:
+            raise ValueError("max_entries_per_date must be zero or greater")
+        if pf.ranking_lookback < 2:
+            raise ValueError("ranking_lookback must be at least 2")
+        if pf.quality_trend_period < 2:
+            raise ValueError("quality_trend_period must be at least 2")
+        if not 0.0 < pf.quality_max_range_rank_pct <= 100.0:
+            raise ValueError("quality_max_range_rank_pct must be between 0 and 100")
+
+        # Cross-sectional ranking inputs.  Every value at bar i uses only data
+        # available through that bar's close, so selection remains causal.
+        for frame in frames.values():
+            lookback = pf.ranking_lookback
+            close = frame["close"].astype(float)
+            trend_sma = close.rolling(lookback, min_periods=lookback).mean()
+            frame["rank_trend"] = (close / trend_sma).replace([np.inf, -np.inf], np.nan)
+            quality_sma = close.rolling(
+                pf.quality_trend_period,
+                min_periods=pf.quality_trend_period,
+            ).mean()
+            frame["quality_trend"] = (close / quality_sma - 1.0).replace(
+                [np.inf, -np.inf], np.nan
+            )
+            frame["rank_volatility"] = close.pct_change(fill_method=None).rolling(
+                lookback, min_periods=lookback
+            ).std()
+            if "volume" in frame:
+                volume = pd.to_numeric(frame["volume"], errors="coerce")
+                average_volume = volume.rolling(lookback, min_periods=lookback).mean()
+                frame["rank_relative_volume"] = (volume / average_volume).replace(
+                    [np.inf, -np.inf], np.nan
+                )
+            else:
+                frame["rank_relative_volume"] = np.nan
+
         # Common (union) calendar across all assets.
         union = pd.DatetimeIndex(sorted(set().union(*[f.index for f in frames.values()])))
         n = len(union)
         tickers = list(frames.keys())
+
+        breadth = np.full(n, np.nan, dtype=float)
+        breadth_eligible = np.ones(n, dtype=bool)
+        if pf.use_breadth_filter:
+            if pf.breadth_sma_period < 1:
+                raise ValueError("breadth_sma_period must be at least 1")
+            if not 0.0 <= pf.breadth_threshold_pct <= 100.0:
+                raise ValueError("breadth_threshold_pct must be between 0 and 100")
+
+            above_count = np.zeros(n, dtype=int)
+            eligible_count = np.zeros(n, dtype=int)
+            has_membership = all("_member" in frame.columns for frame in frames.values())
+            for frame in frames.values():
+                close = frame["close"].astype(float)
+                sma = close.rolling(
+                    pf.breadth_sma_period,
+                    min_periods=pf.breadth_sma_period,
+                ).mean()
+                if "_member" in frame.columns:
+                    member = frame["_member"].fillna(False).astype(bool)
+                else:
+                    # CSV/inline universes have no point-in-time membership
+                    # series.  In that case the loaded assets define the
+                    # breadth universe and this limitation is made explicit.
+                    member = pd.Series(True, index=frame.index)
+                eligible = member & close.notna() & sma.notna()
+                above = eligible & (close > sma)
+                eligible_count += eligible.reindex(union).fillna(False).to_numpy(dtype=bool)
+                above_count += above.reindex(union).fillna(False).to_numpy(dtype=bool)
+
+            valid = eligible_count > 0
+            breadth[valid] = above_count[valid] / eligible_count[valid]
+            breadth_eligible = valid & (breadth >= pf.breadth_threshold_pct / 100.0)
+            if not has_membership:
+                self.warnings.append(
+                    "Breadth calculado sobre o universo de ativos carregado; "
+                    "ative constituintes point-in-time para representar fielmente o índice histórico."
+                )
 
         # Pre-align every series onto the union index as numpy arrays.
         arr: Dict[str, dict] = {}
@@ -225,6 +300,10 @@ class PortfolioEngine:
                 "rsi_cum": f["rsi_cum"].reindex(union).to_numpy(dtype=float),
                 "sma": f["sma_exit"].reindex(union).to_numpy(dtype=float),
                 "atr_mult": f["atr_mult"].reindex(union).to_numpy(dtype=float),
+                "rank_trend": f["rank_trend"].reindex(union).to_numpy(dtype=float),
+                "quality_trend": f["quality_trend"].reindex(union).to_numpy(dtype=float),
+                "rank_volatility": f["rank_volatility"].reindex(union).to_numpy(dtype=float),
+                "rank_relative_volume": f["rank_relative_volume"].reindex(union).to_numpy(dtype=float),
                 "signal": f["entry_signal"].reindex(union).fillna(False).to_numpy(dtype=bool),
                 "pattern": f["pattern"].reindex(union).fillna("").to_numpy(dtype=object),
                 "dividend": (f["dividend"].reindex(union).fillna(0.0).to_numpy(dtype=float)
@@ -374,10 +453,13 @@ class PortfolioEngine:
 
             # --- 4. Evaluate ENTRY signals at this bar's close ------------------
             close_signals = []
+            allow_new_entries = bool(breadth_eligible[i])
             for t in tickers:
                 if not arr[t]["has_bar"][i] or t in positions or t in pending_entries:
                     continue
                 if not arr[t]["signal"][i]:
+                    continue
+                if not allow_new_entries:
                     continue
                 sig_range = float(arr[t]["high"][i] - arr[t]["low"][i])
                 sig_body_low = min(float(arr[t]["open"][i]), float(arr[t]["close"][i]))
@@ -392,6 +474,14 @@ class PortfolioEngine:
                     "signal_body_percentile": sig_body_pct,
                     "signal_atr_mult": sig_atr_mult,
                     "rsi_at_signal": float(arr[t]["rsi"][i]),
+                    "rank_trend": float(arr[t]["rank_trend"][i]),
+                    "quality_trend": float(arr[t]["quality_trend"][i]),
+                    "signal_range_pct": (
+                        sig_range / float(arr[t]["close"][i])
+                        if float(arr[t]["close"][i]) > 0 else float("nan")
+                    ),
+                    "rank_volatility": float(arr[t]["rank_volatility"][i]),
+                    "rank_relative_volume": float(arr[t]["rank_relative_volume"][i]),
                     "pattern": str(arr[t]["pattern"][i]),
                 }
                 if cfg.entry_execution == Execution.SIGNAL_CLOSE:
@@ -482,6 +572,7 @@ class PortfolioEngine:
         equity_series = pd.Series(equity, index=union, name="equity")
         positions_series = pd.Series(n_open, index=union, name="open_positions")
         exposure_series = pd.Series(gross_exposure, index=union, name="gross_exposure")
+        breadth_series = pd.Series(breadth, index=union, name="market_breadth")
         trades_df = _trades_to_frame(trades)
         trades_df = add_period_mfe(trades_df, self.data_by_ticker)
 
@@ -497,6 +588,7 @@ class PortfolioEngine:
             equity_curve=equity_series,
             positions_open=positions_series,
             exposure=exposure_series,
+            breadth=breadth_series,
             frames=frames,
             config=cfg,
             portfolio=pf,
@@ -513,7 +605,8 @@ class PortfolioEngine:
                       equity_base, long_value, positions, unlimited, limit=False) -> float:
         """Fill ranked entry candidates; return new cash.
 
-        Candidates are sorted by RSI ascending (most oversold first).
+        Candidates are ranked with signal-close information only.  At most
+        ``max_entries_per_date`` are considered for this fill date.
 
         * PERCENT mode: each position is ``pct_per_trade`` percent of ``equity_base``
           (notional), filled only while total long exposure stays within
@@ -524,8 +617,47 @@ class PortfolioEngine:
         """
         pf = self.portfolio
         full_equity = pf.sizing_mode == PortfolioSizing.FULL_EQUITY
-        # Most oversold first (irrelevant for FULL_EQUITY, which fills everything).
-        candidates = sorted(candidates, key=lambda x: x[1]["rsi_at_signal"])
+
+        if (
+            pf.minimum_candidates_per_date > 0
+            and len(candidates) < pf.minimum_candidates_per_date
+        ):
+            return cash
+
+        if pf.use_trade_quality_filter and candidates:
+            range_pct = pd.Series(
+                {ticker: meta.get("signal_range_pct", np.nan) for ticker, meta in candidates},
+                dtype=float,
+            )
+            range_rank = range_pct.rank(method="average", pct=True)
+            candidates = [
+                (ticker, meta) for ticker, meta in candidates
+                if np.isfinite(float(meta.get("quality_trend", np.nan)))
+                and float(meta["quality_trend"]) >= pf.quality_min_trend_pct / 100.0
+                and float(range_rank.get(ticker, np.nan))
+                <= pf.quality_max_range_rank_pct / 100.0
+            ]
+        ranking = pf.entry_ranking
+        if not isinstance(ranking, PortfolioEntryRanking):
+            ranking = PortfolioEntryRanking(ranking)
+        rank_fields = {
+            PortfolioEntryRanking.LOWEST_RSI: ("rsi_at_signal", False),
+            PortfolioEntryRanking.LARGEST_HAMMER_ATR: ("signal_atr_mult", True),
+            PortfolioEntryRanking.HIGHEST_RELATIVE_VOLUME: ("rank_relative_volume", True),
+            PortfolioEntryRanking.STRONGEST_TREND: ("rank_trend", True),
+            PortfolioEntryRanking.HIGHEST_VOLATILITY: ("rank_volatility", True),
+        }
+        field, descending = rank_fields[ranking]
+
+        def _rank_key(item):
+            value = float(item[1].get(field, np.nan))
+            missing = not np.isfinite(value)
+            ordered = -value if descending and not missing else value
+            return missing, ordered, item[0]
+
+        candidates = sorted(candidates, key=_rank_key)
+        if pf.max_entries_per_date > 0:
+            candidates = candidates[:pf.max_entries_per_date]
         buying_power = equity_base * pf.leverage
         notional_target = equity_base if full_equity else equity_base * (pf.pct_per_trade / 100.0)
 

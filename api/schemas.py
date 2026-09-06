@@ -95,6 +95,20 @@ class BacktestRequest(BaseModel):
     strategy: StrategyInput = Field(default_factory=StrategyInput)
     max_positions: int = Field(default=10, ge=0, le=1_000)
     pct_per_trade: float = Field(default=10, gt=0, le=100)
+    max_entries_per_date: int = Field(default=1, ge=1, le=1_000)
+    entry_ranking: Literal[
+        "lowest_rsi", "largest_hammer_atr", "highest_relative_volume",
+        "strongest_trend", "highest_volatility",
+    ] = "lowest_rsi"
+    ranking_lookback: int = Field(default=20, ge=2, le=500)
+    minimum_candidates_per_date: int = Field(default=0, ge=0, le=1_000)
+    use_trade_quality_filter: bool = False
+    quality_trend_period: int = Field(default=10, ge=2, le=500)
+    quality_min_trend_pct: float = Field(default=-3.0, ge=-100, le=1_000)
+    quality_max_range_rank_pct: float = Field(default=10.0, gt=0, le=100)
+    use_breadth_filter: bool = False
+    breadth_sma_period: int = Field(default=40, ge=2, le=500)
+    breadth_threshold_pct: float = Field(default=50, ge=0, le=100)
 
 
 class RunSummary(BaseModel):
@@ -138,6 +152,20 @@ class NorgateBacktestRequest(BaseModel):
     strategy: StrategyInput = Field(default_factory=StrategyInput)
     max_positions: int = Field(default=10, ge=0, le=1_000)
     pct_per_trade: float = Field(default=10, gt=0, le=100)
+    max_entries_per_date: int = Field(default=1, ge=1, le=1_000)
+    entry_ranking: Literal[
+        "lowest_rsi", "largest_hammer_atr", "highest_relative_volume",
+        "strongest_trend", "highest_volatility",
+    ] = "lowest_rsi"
+    ranking_lookback: int = Field(default=20, ge=2, le=500)
+    minimum_candidates_per_date: int = Field(default=0, ge=0, le=1_000)
+    use_trade_quality_filter: bool = False
+    quality_trend_period: int = Field(default=10, ge=2, le=500)
+    quality_min_trend_pct: float = Field(default=-3.0, ge=-100, le=1_000)
+    quality_max_range_rank_pct: float = Field(default=10.0, gt=0, le=100)
+    use_breadth_filter: bool = False
+    breadth_sma_period: int = Field(default=40, ge=2, le=500)
+    breadth_threshold_pct: float = Field(default=50, ge=0, le=100)
 
     @model_validator(mode="after")
     def validate_norgate_request(self) -> "NorgateBacktestRequest":
@@ -147,6 +175,11 @@ class NorgateBacktestRequest(BaseModel):
             raise ValueError("Informe ao menos um símbolo ou use a coleção inteira")
         if self.restrict_to_index and not (self.index_name or "").strip():
             raise ValueError("Informe o nome do índice para a restrição point-in-time")
+        if self.use_breadth_filter and self.mode == "portfolio":
+            if not self.use_entire_collection or not self.restrict_to_index:
+                raise ValueError(
+                    "Breadth exige a coleção inteira e constituintes point-in-time"
+                )
         return self
 
 

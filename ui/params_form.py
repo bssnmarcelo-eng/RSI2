@@ -11,6 +11,7 @@ import streamlit as st
 from src.types import (
     CommissionModel,
     CostConfig,
+    EntrySelectionConfig,
     Execution,
     ExitConfig,
     HammerParams,
@@ -20,6 +21,7 @@ from src.types import (
     OptionSizingMode,
     PatternConfig,
     PortfolioConfig,
+    PortfolioEntryRanking,
     PortfolioSizing,
     SizingConfig,
     SizingMethod,
@@ -298,6 +300,108 @@ def _portfolio_tab() -> PortfolioConfig:
     cap = st.number_input("Max simultaneous positions (0 = unlimited)", min_value=0,
                           max_value=500, value=0, step=1, key="p_pf_maxpos")
 
+    st.markdown("#### Seleção entre sinais simultâneos")
+    s1, s2 = st.columns(2)
+    max_entries_per_date = s1.number_input(
+        "Máximo de novas entradas por data",
+        min_value=1,
+        max_value=100,
+        value=1,
+        step=1,
+        key="p_pf_max_entries_date",
+        help="Na estratégia semanal, 1 significa comprar somente o melhor ativo na abertura seguinte.",
+    )
+    ranking_labels = {
+        "Menor RSI(2)": PortfolioEntryRanking.LOWEST_RSI,
+        "Maior Hammer em ATR": PortfolioEntryRanking.LARGEST_HAMMER_ATR,
+        "Maior volume relativo": PortfolioEntryRanking.HIGHEST_RELATIVE_VOLUME,
+        "Tendência mais forte": PortfolioEntryRanking.STRONGEST_TREND,
+        "Maior volatilidade": PortfolioEntryRanking.HIGHEST_VOLATILITY,
+    }
+    ranking_label = s2.selectbox(
+        "Critério para escolher o melhor ativo",
+        list(ranking_labels),
+        index=0,
+        key="p_pf_entry_ranking",
+    )
+    ranking_lookback = st.number_input(
+        "Janela do ranking (barras)",
+        min_value=2,
+        max_value=260,
+        value=20,
+        step=1,
+        key="p_pf_ranking_lookback",
+        help=("Usada por volume relativo, tendência (fechamento/MM) e volatilidade. "
+              "RSI e Hammer em ATR não dependem desta janela."),
+    )
+    st.caption(
+        "O ranking usa somente informações conhecidas no fechamento do sinal. "
+        "Empates são resolvidos pelo ticker em ordem alfabética."
+    )
+    minimum_candidates = st.number_input(
+        "Mínimo de candidatos simultâneos",
+        min_value=0,
+        max_value=1_000,
+        value=0,
+        step=1,
+        key="p_pf_minimum_candidates",
+        help=("Zero desativa. O estudo ampliado encontrou melhora fora da amostra com "
+              "10 ou mais sinais na mesma data, sem atingir 95%."),
+    )
+
+    st.markdown("#### Filtro estatístico de alta precisão (experimental)")
+    use_quality_filter = st.checkbox(
+        "Filtrar por tendência curta e amplitude relativa entre candidatos",
+        value=False,
+        key="p_pf_use_trade_quality_filter",
+        help=("Mantém somente sinais acima do limite relativo à MM curta e entre os candles "
+              "de menor amplitude percentual na mesma data. Usa apenas dados do fechamento do sinal."),
+    )
+    q1, q2, q3 = st.columns(3)
+    quality_period = q1.number_input(
+        "Período da MM", min_value=2, max_value=260, value=10, step=1,
+        key="p_pf_quality_trend_period", disabled=not use_quality_filter,
+    )
+    quality_min_trend = q2.number_input(
+        "Distância mínima da MM (%)", min_value=-100.0, max_value=100.0,
+        value=-3.0, step=0.5, key="p_pf_quality_min_trend",
+        disabled=not use_quality_filter,
+    )
+    quality_range_rank = q3.number_input(
+        "Percentil máximo de amplitude (%)", min_value=0.1, max_value=100.0,
+        value=10.0, step=0.5, key="p_pf_quality_range_rank",
+        disabled=not use_quality_filter,
+    )
+    if use_quality_filter:
+        st.caption(
+            "Configuração pesquisada no backtest 20260906-174817-698: MM10, −3% e "
+            "10%. O resultado histórico de 100% ocorreu em apenas 49 operações e não "
+            "garante 100% no futuro."
+        )
+
+    st.markdown("#### Filtro de breadth")
+    use_breadth = st.checkbox(
+        "Permitir novas entradas somente com breadth suficiente",
+        value=True,
+        key="p_pf_use_breadth",
+        help=("Percentual dos constituintes elegíveis que fecham acima da própria média móvel. "
+              "O filtro não encerra posições já abertas."),
+    )
+    b1, b2 = st.columns(2)
+    breadth_period = b1.number_input(
+        "Período da média (barras)", min_value=2, max_value=500,
+        value=40, step=1, key="p_pf_breadth_period", disabled=not use_breadth,
+    )
+    breadth_threshold = b2.number_input(
+        "Breadth mínimo (%)", min_value=0.0, max_value=100.0,
+        value=50.0, step=1.0, key="p_pf_breadth_threshold", disabled=not use_breadth,
+    )
+    if use_breadth:
+        st.caption(
+            "Configuração inicial recomendada: pelo menos 50% dos constituintes acima da MM40. "
+            "Com Norgate, ative a restrição point-in-time para usar a composição histórica exata."
+        )
+
     if sizing_label.startswith("Capital integral"):
         st.warning(
             "⚠️ Margem ilimitada: cada sinal aloca **100% do patrimônio**. A exposição "
@@ -306,15 +410,126 @@ def _portfolio_tab() -> PortfolioConfig:
         return PortfolioConfig(
             initial_capital=float(initial_capital),
             sizing_mode=PortfolioSizing.FULL_EQUITY,
-            allow_fractional=bool(allow_fractional))
+            allow_fractional=bool(allow_fractional),
+            max_entries_per_date=int(max_entries_per_date),
+            entry_ranking=ranking_labels[ranking_label],
+            ranking_lookback=int(ranking_lookback),
+            minimum_candidates_per_date=int(minimum_candidates),
+            use_trade_quality_filter=bool(use_quality_filter),
+            quality_trend_period=int(quality_period),
+            quality_min_trend_pct=float(quality_min_trend),
+            quality_max_range_rank_pct=float(quality_range_rank),
+            use_breadth_filter=bool(use_breadth),
+            breadth_sma_period=int(breadth_period),
+            breadth_threshold_pct=float(breadth_threshold))
 
     st.caption(
-        f"Up to ~{int((leverage * 100) // pct_per_trade) if pct_per_trade else 0} positions fit at "
-        f"{pct_per_trade:g}% each with {leverage:g}× leverage. Ties broken by most oversold (lowest RSI).")
+        f"Até ~{int((leverage * 100) // pct_per_trade) if pct_per_trade else 0} posições simultâneas "
+        f"cabem com {pct_per_trade:g}% por operação e alavancagem {leverage:g}×. "
+        f"No máximo {int(max_entries_per_date)} nova(s) entrada(s) será(ão) aceita(s) por data.")
     return PortfolioConfig(
         initial_capital=float(initial_capital), sizing_mode=PortfolioSizing.PERCENT,
         pct_per_trade=float(pct_per_trade), leverage=float(leverage),
-        max_positions=int(cap), allow_fractional=bool(allow_fractional))
+        max_positions=int(cap), allow_fractional=bool(allow_fractional),
+        max_entries_per_date=int(max_entries_per_date),
+        entry_ranking=ranking_labels[ranking_label],
+        ranking_lookback=int(ranking_lookback),
+        minimum_candidates_per_date=int(minimum_candidates),
+        use_trade_quality_filter=bool(use_quality_filter),
+        quality_trend_period=int(quality_period),
+        quality_min_trend_pct=float(quality_min_trend),
+        quality_max_range_rank_pct=float(quality_range_rank),
+        use_breadth_filter=bool(use_breadth),
+        breadth_sma_period=int(breadth_period),
+        breadth_threshold_pct=float(breadth_threshold))
+
+
+def _per_asset_selection_tab() -> EntrySelectionConfig:
+    """Selection widgets for the consolidated independent-asset trade log."""
+    st.markdown("#### Seleção entre sinais simultâneos")
+    c1, c2 = st.columns(2)
+    max_entries = c1.number_input(
+        "Máximo de novas entradas por data",
+        min_value=1,
+        max_value=100,
+        value=1,
+        step=1,
+        key="pa_max_entries_date",
+    )
+    labels = {
+        "Menor RSI(2)": PortfolioEntryRanking.LOWEST_RSI,
+        "Maior Hammer em ATR": PortfolioEntryRanking.LARGEST_HAMMER_ATR,
+        "Maior volume relativo": PortfolioEntryRanking.HIGHEST_RELATIVE_VOLUME,
+        "Tendência mais forte": PortfolioEntryRanking.STRONGEST_TREND,
+        "Maior volatilidade": PortfolioEntryRanking.HIGHEST_VOLATILITY,
+    }
+    ranking_label = c2.selectbox(
+        "Critério para escolher o melhor ativo",
+        list(labels),
+        index=0,
+        key="pa_entry_ranking",
+    )
+    lookback = st.number_input(
+        "Janela do ranking (barras)",
+        min_value=2,
+        max_value=260,
+        value=20,
+        step=1,
+        key="pa_ranking_lookback",
+        help=("Usada por volume relativo, tendência e volatilidade. "
+              "RSI e Hammer em ATR não dependem desta janela."),
+    )
+    st.caption(
+        "O limite é aplicado ao consolidado de operações independentes. "
+        "Empates são resolvidos pelo ticker em ordem alfabética."
+    )
+    minimum_candidates = st.number_input(
+        "Mínimo de candidatos simultâneos",
+        min_value=0,
+        max_value=1_000,
+        value=0,
+        step=1,
+        key="pa_minimum_candidates",
+        help=("Zero desativa. O limiar 10 elevou a taxa fora da amostra, mas não "
+              "produziu 95% no teste final."),
+    )
+    use_quality_filter = st.checkbox(
+        "Filtro experimental de alta precisão",
+        value=False,
+        key="pa_use_trade_quality_filter",
+        help=("Combina distância para a média curta com o percentil de amplitude "
+              "dos sinais da mesma data. Usa somente informação disponível no sinal."),
+    )
+    q1, q2, q3 = st.columns(3)
+    quality_period = q1.number_input(
+        "Período da MM", min_value=2, max_value=260, value=10, step=1,
+        key="pa_quality_trend_period", disabled=not use_quality_filter,
+    )
+    quality_min_trend = q2.number_input(
+        "Distância mínima da MM (%)", min_value=-100.0, max_value=100.0,
+        value=-3.0, step=0.5, key="pa_quality_min_trend",
+        disabled=not use_quality_filter,
+    )
+    quality_range_rank = q3.number_input(
+        "Percentil máximo de amplitude (%)", min_value=0.1, max_value=100.0,
+        value=10.0, step=0.5, key="pa_quality_range_rank",
+        disabled=not use_quality_filter,
+    )
+    if use_quality_filter:
+        st.caption(
+            "MM10 / −3% / 10% produziu 49 acertos em 49 ocorrências no estudo salvo em "
+            "docs; a amostra é pequena e não oferece garantia futura."
+        )
+    return EntrySelectionConfig(
+        max_entries_per_date=int(max_entries),
+        entry_ranking=labels[ranking_label],
+        ranking_lookback=int(lookback),
+        minimum_candidates_per_date=int(minimum_candidates),
+        use_trade_quality_filter=bool(use_quality_filter),
+        quality_trend_period=int(quality_period),
+        quality_min_trend_pct=float(quality_min_trend),
+        quality_max_range_rank_pct=float(quality_range_rank),
+    )
 
 
 def configuration_form(mode: str, *, with_run: bool):
@@ -342,8 +557,14 @@ def configuration_form(mode: str, *, with_run: bool):
             with tab_e:
                 e = _entry_tab()
         else:
+            if mode == "portfolio":
+                sizing_tab_label = "💰 Carteira e seleção"
+            elif mode == "per_asset":
+                sizing_tab_label = "💰 Sizing e seleção"
+            else:
+                sizing_tab_label = "💰 Sizing"
             tab_e, tab_x, tab_c, tab_o, tab_s = st.tabs(
-                ["📥 Entrada", "🚪 Saídas", "🧾 Custos", "Opções ATM", "💰 Sizing"])
+                ["📥 Entrada", "🚪 Saídas", "🧾 Custos", "Opções ATM", sizing_tab_label])
             with tab_e:
                 e = _entry_tab()
             with tab_x:
@@ -357,6 +578,8 @@ def configuration_form(mode: str, *, with_run: bool):
                     pconf = _portfolio_tab()
                 else:
                     init_cap, sizing = _single_sizing_tab()
+                    if mode == "per_asset":
+                        pconf = _per_asset_selection_tab()
         submitted = st.form_submit_button(submit_label, type="primary")
 
     cfg = StrategyConfig(

@@ -60,11 +60,23 @@ A long **setup** is confirmed at a candle's **close** when **both** conditions h
   power (plus an optional hard cap). When more signals fire on a bar than there
   is buying power for, the **most oversold names (lowest RSI) are filled first**.
 
+  The optional **market-breadth filter** blocks new entries unless a configurable
+  percentage of eligible constituents closes above its own trailing SMA. The
+  initial profile uses **Breadth ≥ 50% above SMA(40)**. Existing positions are
+  never liquidated by this gate. For Norgate index research, the UI requires the
+  complete collection and point-in-time constituent masks so historical breadth
+  is not calculated from today's membership.
+
   Load data either as **one CSV containing many tickers** (via a `ticker`/`symbol`
   column) or as **several single-ticker CSVs at once** (the ticker is inferred
   from each filename). Results include the combined equity curve and drawdown,
   open-positions-over-time, per-ticker P&L contribution, a per-ticker breakdown
   table, and a per-asset price/RSI drill-down.
+- **Experimental high-precision filter** — gate simultaneous candidates by
+  short-term trend and cross-sectional candle-range percentile using only data
+  known at the signal close. It is disabled by default; see
+  [`docs/analise-backtest-20260906-174817-698.md`](docs/analise-backtest-20260906-174817-698.md)
+  for the research results and limitations.
 
 ### Execution (no look-ahead bias)
 
@@ -142,7 +154,6 @@ streamlit run app.py
 Optional integrations:
 
 ```bash
-pip install -r requirements-screening.txt  # Yahoo Finance screening
 pip install -r requirements-norgate.txt    # Windows + active Norgate subscription
 pip install -r requirements-dev.txt        # tests and lint
 ```
@@ -308,7 +319,7 @@ backtest_app/
     backtest_engine.py        # single-asset event-driven engine + shared signal builder
     portfolio_engine.py       # multi-asset shared-capital engine (leverage, ranked fills)
     optimizer.py              # per-asset grid search with in/out-of-sample split
-    screener.py               # market screening (Wikipedia constituents + yfinance OHLC)
+    screener.py               # market screening (Norgate constituents + adjusted OHLC)
     logger.py                 # persistent backtest log (runs index + per-run tables)
     performance_metrics.py    # metrics + monthly/yearly aggregations
     charts.py                 # Plotly figure builders

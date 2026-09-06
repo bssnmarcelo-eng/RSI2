@@ -7,8 +7,8 @@ import streamlit as st
 from src import norgate_loader, screener
 from src.utils import fmt_money, fmt_num
 from ui.data_source import (
-    _ng_databases,
     _ng_database_symbols,
+    _ng_databases,
     _ng_watchlist_symbols,
     _ng_watchlists,
 )

@@ -7,7 +7,13 @@ import pytest
 
 import src.portfolio_engine as portfolio_module
 from src.portfolio_engine import PortfolioEngine
-from src.types import CostConfig, Execution, ExitConfig, PortfolioConfig
+from src.types import (
+    CostConfig,
+    Execution,
+    ExitConfig,
+    PortfolioConfig,
+    PortfolioEntryRanking,
+)
 from tests._helpers import make_config
 
 
@@ -186,9 +192,143 @@ def test_margin_interest_accrues_on_negative_cash(monkeypatch):
     a = _frame(dates, [100, 100, 100], signal_at=0)
     b = _frame(dates, [100, 100, 100], signal_at=0)
     cfg = make_config(costs=CostConfig(annual_margin_rate=0.36525))
-    pf = _portfolio(pct_per_trade=100.0, leverage=2.0)
+    pf = _portfolio(pct_per_trade=100.0, leverage=2.0, max_entries_per_date=0)
 
     result = PortfolioEngine({"AAA": a, "BBB": b}, cfg, pf).run()
 
     assert result.financing_costs == pytest.approx(10.0)
     assert result.equity_curve.iloc[-1] == pytest.approx(9_990.0)
+
+
+def test_only_lowest_rsi_candidate_enters_on_the_same_date(monkeypatch):
+    _identity_signal_builder(monkeypatch)
+    dates = pd.date_range("2024-01-05", periods=3, freq="W-FRI")
+    a = _frame(dates, [100, 100, 101], signal_at=0, rsi=[6, 50, 50])
+    b = _frame(dates, [100, 100, 101], signal_at=0, rsi=[2, 50, 50])
+    pf = _portfolio(
+        pct_per_trade=10.0,
+        max_entries_per_date=1,
+        entry_ranking=PortfolioEntryRanking.LOWEST_RSI,
+    )
+
+    result = PortfolioEngine({"AAA": a, "BBB": b}, make_config(), pf).run()
+
+    assert result.trades["ticker"].tolist() == ["BBB"]
+    assert result.trades["entry_date"].tolist() == [dates[1]]
+
+
+def test_minimum_candidates_rejects_sparse_portfolio_signal_date(monkeypatch):
+    _identity_signal_builder(monkeypatch)
+    dates = pd.date_range("2024-01-05", periods=3, freq="W-FRI")
+    a = _frame(dates, [100, 100, 101], signal_at=0)
+    b = _frame(dates, [100, 100, 101], signal_at=0)
+    pf = _portfolio(
+        max_entries_per_date=2,
+        minimum_candidates_per_date=3,
+    )
+
+    result = PortfolioEngine({"AAA": a, "BBB": b}, make_config(), pf).run()
+
+    assert result.trades.empty
+
+
+def test_largest_hammer_atr_can_override_lowest_rsi(monkeypatch):
+    _identity_signal_builder(monkeypatch)
+    dates = pd.date_range("2024-01-05", periods=3, freq="W-FRI")
+    a = _frame(dates, [100, 100, 101], signal_at=0, rsi=[6, 50, 50])
+    b = _frame(dates, [100, 100, 101], signal_at=0, rsi=[2, 50, 50])
+    a.loc[dates[0], "atr_mult"] = 3.0
+    b.loc[dates[0], "atr_mult"] = 1.5
+    pf = _portfolio(
+        pct_per_trade=10.0,
+        max_entries_per_date=1,
+        entry_ranking=PortfolioEntryRanking.LARGEST_HAMMER_ATR,
+    )
+
+    result = PortfolioEngine({"AAA": a, "BBB": b}, make_config(), pf).run()
+
+    assert result.trades["ticker"].tolist() == ["AAA"]
+
+
+def test_trade_quality_filter_uses_signal_range_rank_and_short_trend(monkeypatch):
+    _identity_signal_builder(monkeypatch)
+    dates = pd.date_range("2024-01-05", periods=12, freq="W-FRI")
+    frames = {}
+    for number in range(1, 11):
+        ticker = f"T{number:02d}"
+        frame = _frame(dates, [100.0] * 11 + [103.0], signal_at=10)
+        frame.loc[dates[10], "high"] = 100.0 + number / 2
+        frame.loc[dates[10], "low"] = 100.0 - number / 2
+        frames[ticker] = frame
+    pf = _portfolio(
+        pct_per_trade=10.0,
+        max_entries_per_date=100,
+        use_trade_quality_filter=True,
+        quality_trend_period=10,
+        quality_min_trend_pct=-3.0,
+        quality_max_range_rank_pct=10.0,
+    )
+
+    result = PortfolioEngine(frames, make_config(), pf).run()
+
+    assert result.trades["ticker"].tolist() == ["T01"]
+
+
+def test_breadth_filter_allows_entries_at_exact_threshold(monkeypatch):
+    _identity_signal_builder(monkeypatch)
+    dates = pd.date_range("2024-01-01", periods=4, freq="D")
+    leader = _frame(dates, [100, 110, 110, 110], signal_at=1)
+    laggard = _frame(dates, [100, 90, 90, 90])
+    leader["_member"] = True
+    laggard["_member"] = True
+    pf = _portfolio(
+        use_breadth_filter=True,
+        breadth_sma_period=2,
+        breadth_threshold_pct=50.0,
+    )
+
+    result = PortfolioEngine({"LEAD": leader, "LAG": laggard}, make_config(), pf).run()
+
+    assert result.breadth.loc[dates[1]] == pytest.approx(0.5)
+    assert len(result.trades) == 1
+    assert result.trades.iloc[0]["ticker"] == "LEAD"
+
+
+def test_breadth_filter_blocks_new_entry_below_threshold(monkeypatch):
+    _identity_signal_builder(monkeypatch)
+    dates = pd.date_range("2024-01-01", periods=4, freq="D")
+    leader = _frame(dates, [100, 110, 110, 110], signal_at=1)
+    laggard = _frame(dates, [100, 90, 90, 90])
+    leader["_member"] = True
+    laggard["_member"] = True
+    pf = _portfolio(
+        use_breadth_filter=True,
+        breadth_sma_period=2,
+        breadth_threshold_pct=51.0,
+    )
+
+    result = PortfolioEngine({"LEAD": leader, "LAG": laggard}, make_config(), pf).run()
+
+    assert result.breadth.loc[dates[1]] == pytest.approx(0.5)
+    assert result.trades.empty
+
+
+def test_breadth_uses_only_point_in_time_members(monkeypatch):
+    _identity_signal_builder(monkeypatch)
+    dates = pd.date_range("2024-01-01", periods=4, freq="D")
+    leader = _frame(dates, [100, 110, 110, 110], signal_at=1)
+    former_member = _frame(dates, [100, 90, 90, 90])
+    leader["_member"] = True
+    former_member["_member"] = False
+    pf = _portfolio(
+        use_breadth_filter=True,
+        breadth_sma_period=2,
+        breadth_threshold_pct=100.0,
+    )
+
+    result = PortfolioEngine(
+        {"LEAD": leader, "FORMER": former_member}, make_config(), pf
+    ).run()
+
+    assert result.breadth.loc[dates[1]] == pytest.approx(1.0)
+    assert len(result.trades) == 1
