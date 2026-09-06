@@ -95,6 +95,12 @@ class BacktestRequest(BaseModel):
     strategy: StrategyInput = Field(default_factory=StrategyInput)
     max_positions: int = Field(default=10, ge=0, le=1_000)
     pct_per_trade: float = Field(default=10, gt=0, le=100)
+    max_entries_per_date: int = Field(default=1, ge=1, le=1_000)
+    entry_ranking: Literal[
+        "lowest_rsi", "largest_hammer_atr", "highest_relative_volume",
+        "strongest_trend", "highest_volatility",
+    ] = "lowest_rsi"
+    ranking_lookback: int = Field(default=20, ge=2, le=500)
     use_breadth_filter: bool = False
     breadth_sma_period: int = Field(default=40, ge=2, le=500)
     breadth_threshold_pct: float = Field(default=50, ge=0, le=100)
@@ -141,6 +147,12 @@ class NorgateBacktestRequest(BaseModel):
     strategy: StrategyInput = Field(default_factory=StrategyInput)
     max_positions: int = Field(default=10, ge=0, le=1_000)
     pct_per_trade: float = Field(default=10, gt=0, le=100)
+    max_entries_per_date: int = Field(default=1, ge=1, le=1_000)
+    entry_ranking: Literal[
+        "lowest_rsi", "largest_hammer_atr", "highest_relative_volume",
+        "strongest_trend", "highest_volatility",
+    ] = "lowest_rsi"
+    ranking_lookback: int = Field(default=20, ge=2, le=500)
     use_breadth_filter: bool = False
     breadth_sma_period: int = Field(default=40, ge=2, le=500)
     breadth_threshold_pct: float = Field(default=50, ge=0, le=100)

@@ -1,127 +1,66 @@
-"""Market screening: scan an index for tickers currently firing the entry signal.
+"""Market screening using current Norgate universes and Norgate OHLC bars.
 
-Constituents are scraped from Wikipedia; OHLC bars are downloaded with yfinance;
-the strategy's own :func:`build_signal_frame` is then run on each ticker so the
-screen is IDENTICAL to the backtest entry condition (RSI(period) < threshold AND
-percentile hammer, plus the optional ATR and price filters). A "hit" is a ticker
-whose ``entry_signal`` is True on the evaluated candle.
-
-External data (yfinance / Wikipedia) is only used here, in the screening mode.
+The strategy's own :func:`build_signal_frame` is run on each ticker so the screen
+is identical to the backtest entry condition. A "hit" is a ticker whose
+``entry_signal`` is true on the evaluated candle.
 """
 from __future__ import annotations
 
-import io
 from typing import Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from . import norgate_loader
 from .backtest_engine import build_signal_frame
 from .types import StrategyConfig
 
-# Index -> Wikipedia URL (constituent tables). S&P 1500 is the union of 500+400+600.
-_WIKI = {
-    "Nasdaq 100": "https://en.wikipedia.org/wiki/Nasdaq-100",
-    "S&P 500": "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
-    "S&P 400 (MidCap)": "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies",
-    "S&P 600 (SmallCap)": "https://en.wikipedia.org/wiki/List_of_S%26P_600_companies",
+# UI index label -> current-constituent Norgate watchlist.
+_NORGATE_WATCHLISTS = {
+    "Nasdaq 100": "Nasdaq 100",
+    "S&P 500": "S&P 500",
+    "S&P 400 (MidCap)": "S&P MidCap 400",
+    "S&P 600 (SmallCap)": "S&P SmallCap 600",
+    "S&P 1500": "S&P Composite 1500",
 }
 INDICES: List[str] = ["Nasdaq 100", "S&P 500", "S&P 400 (MidCap)",
                       "S&P 600 (SmallCap)", "S&P 1500"]
 
-# Timeframe label -> (yfinance interval, yfinance period). Periods give >100 bars
-# (enough warmup for RSI and ATR) while staying within yfinance's limits.
-TIMEFRAMES: Dict[str, Tuple[str, str]] = {
-    "60 minutes": ("60m", "3mo"),
-    "Daily": ("1d", "1y"),
-    "Weekly": ("1wk", "5y"),
-    "Monthly": ("1mo", "10y"),
+# Timeframe label -> (Norgate frequency label, lookback years).
+TIMEFRAMES: Dict[str, Tuple[str, int]] = {
+    "Daily": ("Diário", 1),
+    "Weekly": ("Semanal", 5),
+    "Monthly": ("Mensal", 10),
 }
 
-_HEADERS = {"User-Agent": "Mozilla/5.0 (backtest-screener)"}
-
-
-def _normalize_symbol(sym: str) -> str:
-    """Wikipedia/Yahoo symbol normalisation (e.g. 'BRK.B' -> 'BRK-B')."""
-    return str(sym).strip().upper().replace(".", "-").replace("\xa0", "")
-
-
-def _symbols_from_wiki(url: str) -> List[str]:
-    import requests
-    resp = requests.get(url, headers=_HEADERS, timeout=30)
-    resp.raise_for_status()
-    tables = pd.read_html(io.StringIO(resp.text))
-    # Pick the table that has a Symbol/Ticker column and the most rows.
-    best: List[str] = []
-    for t in tables:
-        cols = {str(c): c for c in t.columns}
-        key = next((cols[c] for c in ("Symbol", "Ticker") if c in cols), None)
-        if key is None:
-            continue
-        syms = [_normalize_symbol(s) for s in t[key].astype(str) if str(s).strip()]
-        syms = [s for s in syms if s and s.lower() != "nan"]
-        if len(syms) > len(best):
-            best = syms
-    return best
-
-
 def get_constituents(index: str) -> List[str]:
-    """Return the list of tickers for ``index`` (raises on network/parse failure)."""
-    if index == "S&P 1500":
-        out: List[str] = []
-        for name in ("S&P 500", "S&P 400 (MidCap)", "S&P 600 (SmallCap)"):
-            out.extend(_symbols_from_wiki(_WIKI[name]))
-        return sorted(set(out))
-    if index not in _WIKI:
+    """Return current constituents from the corresponding Norgate watchlist."""
+    if index not in _NORGATE_WATCHLISTS:
         raise ValueError(f"Unknown index: {index}")
-    return sorted(set(_symbols_from_wiki(_WIKI[index])))
+    watchlist = _NORGATE_WATCHLISTS[index]
+    symbols = norgate_loader.get_watchlist_symbols(watchlist)
+    if not symbols:
+        raise RuntimeError(
+            f"Norgate watchlist '{watchlist}' is unavailable or has no constituents."
+        )
+    return symbols
 
 
-def _extract_ohlc(data: pd.DataFrame, ticker: str) -> Optional[pd.DataFrame]:
-    """Pull one ticker's OHLC out of a (possibly multi-index) yfinance frame."""
-    try:
-        if isinstance(data.columns, pd.MultiIndex):
-            lvl0 = data.columns.get_level_values(0)
-            lvl1 = data.columns.get_level_values(1)
-            if ticker in lvl0:
-                sub = data[ticker]
-            elif ticker in lvl1:
-                sub = data.xs(ticker, axis=1, level=1)
-            else:
-                return None
-        else:
-            sub = data
-        sub = sub.rename(columns=str.lower)
-        if not {"open", "high", "low", "close"}.issubset(sub.columns):
-            return None
-        sub = sub[["open", "high", "low", "close"]].dropna()
-        return sub if len(sub) else None
-    except Exception:
-        return None
-
-
-def fetch_ohlc(tickers: List[str], interval: str, period: str,
-               batch_size: int = 120,
+def fetch_ohlc(tickers: List[str], frequency_label: str, lookback_years: int,
+               min_bars: int,
                progress: Optional[Callable[[float], None]] = None) -> Dict[str, pd.DataFrame]:
-    """Download OHLC for many tickers via yfinance, in batches. Returns ticker->df."""
-    import yfinance as yf
-
-    out: Dict[str, pd.DataFrame] = {}
-    n = len(tickers)
-    for start in range(0, n, batch_size):
-        batch = tickers[start:start + batch_size]
-        try:
-            data = yf.download(batch, period=period, interval=interval, group_by="ticker",
-                               auto_adjust=True, threads=True, progress=False)
-        except Exception:
-            data = None
-        if data is not None and not data.empty:
-            for t in batch:
-                df = _extract_ohlc(data, t)
-                if df is not None:
-                    out[t] = df
-        if progress:
-            progress(min((start + batch_size) / n, 1.0))
-    return out
+    """Load adjusted OHLC for many tickers from the local Norgate database."""
+    end = pd.Timestamp.today().normalize()
+    start = end - pd.DateOffset(years=lookback_years)
+    data, _warnings, _skipped = norgate_loader.fetch_many(
+        tickers,
+        adjustment_label="Total Return (splits + dividendos)",
+        start_date=start.date().isoformat(),
+        end_date=end.date().isoformat(),
+        min_bars=min_bars,
+        frequency_label=frequency_label,
+        progress=progress,
+    )
+    return data
 
 
 def _min_bars(cfg: StrategyConfig) -> int:
@@ -163,8 +102,10 @@ def run_screen(tickers: List[str], timeframe: str, cfg: StrategyConfig,
     ``hits_df`` rows are tickers whose entry_signal is True on the evaluated candle,
     sorted by RSI ascending (most oversold first).
     """
-    interval, period = TIMEFRAMES[timeframe]
-    ohlc = fetch_ohlc(tickers, interval, period, progress=progress)
+    frequency_label, lookback_years = TIMEFRAMES[timeframe]
+    ohlc = fetch_ohlc(
+        tickers, frequency_label, lookback_years, _min_bars(cfg), progress=progress
+    )
 
     hits: List[dict] = []
     scanned = 0

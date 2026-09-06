@@ -45,6 +45,25 @@ class PortfolioSizing(str, Enum):
     FULL_EQUITY = "full_equity"  # 100% of equity per trade, unlimited buying power
 
 
+class PortfolioEntryRanking(str, Enum):
+    """Causal ranking used when several assets signal for the same entry date."""
+
+    LOWEST_RSI = "lowest_rsi"
+    LARGEST_HAMMER_ATR = "largest_hammer_atr"
+    HIGHEST_RELATIVE_VOLUME = "highest_relative_volume"
+    STRONGEST_TREND = "strongest_trend"
+    HIGHEST_VOLATILITY = "highest_volatility"
+
+
+@dataclass
+class EntrySelectionConfig:
+    """Cross-sectional admission rule for multi-asset entry dates."""
+
+    max_entries_per_date: int = 1
+    entry_ranking: PortfolioEntryRanking = PortfolioEntryRanking.LOWEST_RSI
+    ranking_lookback: int = 20
+
+
 class InstrumentType(str, Enum):
     """Instrument used to express the strategy signal."""
 
@@ -218,8 +237,8 @@ class PortfolioConfig:
     A single cash pool is shared across all assets; cash may go negative
     (a margin loan) as long as total long exposure stays within buying power.
     Each new position is sized as ``pct_per_trade`` percent of current equity
-    (notional). When several entry signals fire on the same bar and buying power
-    is scarce, the most oversold names (lowest RSI) are filled first.
+    (notional). When several entry signals target the same date, at most
+    ``max_entries_per_date`` are admitted according to ``entry_ranking``.
     """
 
     initial_capital: float = 100_000.0
@@ -228,6 +247,13 @@ class PortfolioConfig:
     leverage: float = 1.0             # buying-power multiple (1.0 = cash account) (PERCENT mode)
     max_positions: int = 0            # hard cap on concurrent positions; 0 = no cap (PERCENT mode)
     allow_fractional: bool = True     # fractional shares keep portfolio math exact
+
+    # Cross-sectional selection at the entry open.  A value of 1 enforces the
+    # weekly strategy rule of choosing only the best candidate for that date;
+    # 0 preserves the legacy unlimited-per-date behaviour.
+    max_entries_per_date: int = 1
+    entry_ranking: PortfolioEntryRanking = PortfolioEntryRanking.LOWEST_RSI
+    ranking_lookback: int = 20
 
     # Market-breadth entry gate.  At each signal close, calculate the share of
     # eligible constituents whose close is above their own trailing SMA.  New

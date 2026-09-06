@@ -2,8 +2,8 @@
 
 A professional backtesting application for a long-only mean-reversion strategy,
 built with Python, Pandas, NumPy, Streamlit and Plotly. CSV backtests are fully
-local. Optional integrations use Yahoo Finance/Wikipedia for screening and
-Norgate Data for prices, point-in-time membership and current fundamentals.
+local. The optional Norgate integration supplies screening universes, prices,
+point-in-time membership and current fundamentals.
 
 > The interface is presented in Portuguese. This README keeps established
 > quantitative terms in English where they are commonly used by practitioners.
@@ -44,13 +44,13 @@ A long **setup** is confirmed at a candle's **close** when **both** conditions h
   parameters, a sortable table of every combination, a heatmap when exactly two
   parameters are swept, and a CSV download. A safety cap limits the grid size.
 - **Market Screening** — scan an index for tickers **currently firing the entry
-  signal** on a chosen timeframe (60 min, daily, weekly, monthly). Constituents
-  are fetched from Wikipedia (Nasdaq 100, S&P 500/400/600/1500); OHLC bars come
-  from Yahoo Finance via `yfinance`, and the strategy's own signal logic
+  signal** on a chosen timeframe (daily, weekly, monthly). Current constituents
+  and Total Return-adjusted OHLC bars come from the local Norgate database, and
+  the strategy's own signal logic
   (RSI(2) + percentile hammer + ATR/price filters) is run on each ticker, so the
   screen matches the backtest exactly. Hits are listed (most oversold first) with
-  a CSV download. **This mode uses external data**
-  does); it needs internet and the optional deps `yfinance lxml requests`.
+  a CSV download. This mode requires Windows, an active Norgate subscription,
+  and Norgate Data Updater running.
 - **Portfolio (shared capital)** — run the same strategy across many tickers
   sharing **one capital pool** (a real portfolio, not independent backtests).
   Buying power is modelled IBKR-style: `buying_power = equity × leverage`.
@@ -148,7 +148,6 @@ streamlit run app.py
 Optional integrations:
 
 ```bash
-pip install -r requirements-screening.txt  # Yahoo Finance screening
 pip install -r requirements-norgate.txt    # Windows + active Norgate subscription
 pip install -r requirements-dev.txt        # tests and lint
 ```
@@ -314,7 +313,7 @@ backtest_app/
     backtest_engine.py        # single-asset event-driven engine + shared signal builder
     portfolio_engine.py       # multi-asset shared-capital engine (leverage, ranked fills)
     optimizer.py              # per-asset grid search with in/out-of-sample split
-    screener.py               # market screening (Wikipedia constituents + yfinance OHLC)
+    screener.py               # market screening (Norgate constituents + adjusted OHLC)
     logger.py                 # persistent backtest log (runs index + per-run tables)
     performance_metrics.py    # metrics + monthly/yearly aggregations
     charts.py                 # Plotly figure builders

@@ -7,7 +7,13 @@ import pytest
 
 import src.portfolio_engine as portfolio_module
 from src.portfolio_engine import PortfolioEngine
-from src.types import CostConfig, Execution, ExitConfig, PortfolioConfig
+from src.types import (
+    CostConfig,
+    Execution,
+    ExitConfig,
+    PortfolioConfig,
+    PortfolioEntryRanking,
+)
 from tests._helpers import make_config
 
 
@@ -186,12 +192,47 @@ def test_margin_interest_accrues_on_negative_cash(monkeypatch):
     a = _frame(dates, [100, 100, 100], signal_at=0)
     b = _frame(dates, [100, 100, 100], signal_at=0)
     cfg = make_config(costs=CostConfig(annual_margin_rate=0.36525))
-    pf = _portfolio(pct_per_trade=100.0, leverage=2.0)
+    pf = _portfolio(pct_per_trade=100.0, leverage=2.0, max_entries_per_date=0)
 
     result = PortfolioEngine({"AAA": a, "BBB": b}, cfg, pf).run()
 
     assert result.financing_costs == pytest.approx(10.0)
     assert result.equity_curve.iloc[-1] == pytest.approx(9_990.0)
+
+
+def test_only_lowest_rsi_candidate_enters_on_the_same_date(monkeypatch):
+    _identity_signal_builder(monkeypatch)
+    dates = pd.date_range("2024-01-05", periods=3, freq="W-FRI")
+    a = _frame(dates, [100, 100, 101], signal_at=0, rsi=[6, 50, 50])
+    b = _frame(dates, [100, 100, 101], signal_at=0, rsi=[2, 50, 50])
+    pf = _portfolio(
+        pct_per_trade=10.0,
+        max_entries_per_date=1,
+        entry_ranking=PortfolioEntryRanking.LOWEST_RSI,
+    )
+
+    result = PortfolioEngine({"AAA": a, "BBB": b}, make_config(), pf).run()
+
+    assert result.trades["ticker"].tolist() == ["BBB"]
+    assert result.trades["entry_date"].tolist() == [dates[1]]
+
+
+def test_largest_hammer_atr_can_override_lowest_rsi(monkeypatch):
+    _identity_signal_builder(monkeypatch)
+    dates = pd.date_range("2024-01-05", periods=3, freq="W-FRI")
+    a = _frame(dates, [100, 100, 101], signal_at=0, rsi=[6, 50, 50])
+    b = _frame(dates, [100, 100, 101], signal_at=0, rsi=[2, 50, 50])
+    a.loc[dates[0], "atr_mult"] = 3.0
+    b.loc[dates[0], "atr_mult"] = 1.5
+    pf = _portfolio(
+        pct_per_trade=10.0,
+        max_entries_per_date=1,
+        entry_ranking=PortfolioEntryRanking.LARGEST_HAMMER_ATR,
+    )
+
+    result = PortfolioEngine({"AAA": a, "BBB": b}, make_config(), pf).run()
+
+    assert result.trades["ticker"].tolist() == ["AAA"]
 
 
 def test_breadth_filter_allows_entries_at_exact_threshold(monkeypatch):

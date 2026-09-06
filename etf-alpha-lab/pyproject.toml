@@ -3,29 +3,29 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "rsi2-backtester"
-version = "0.2.0"
-description = "Backtester de reversão à média com RSI e padrões de candle"
+name = "etf-alpha-lab"
+version = "0.1.0"
+description = "ETF-only, unlevered multi-strategy research and IBKR execution lab"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-  "streamlit>=1.30",
-  "pandas>=2.0",
   "numpy>=1.24",
+  "pandas>=2.0",
   "plotly>=5.18",
+  "streamlit>=1.30",
+  "norgatedata>=1.0.74; platform_system == 'Windows'",
 ]
 
 [project.optional-dependencies]
-norgate = ["norgatedata>=1.0.74; platform_system == 'Windows'"]
-dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6", "httpx>=0.28"]
-api = ["fastapi>=0.116,<1", "uvicorn[standard]>=0.35,<1", "pydantic>=2.11,<3"]
+ibkr = ["ib_async>=2.0.1"]
+dev = ["pytest>=8.0", "ruff>=0.6"]
 
 [tool.setuptools.packages.find]
-include = ["src*", "ui*"]
+where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 110

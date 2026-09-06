@@ -12,8 +12,8 @@ Capital model (IBKR-style margin)
 * Each new position is sized at ``pct_per_trade`` percent of current equity
   (notional). The number of simultaneous positions is therefore limited
   naturally by available buying power (and optionally a hard ``max_positions``).
-* When more entry signals fire on a bar than there is buying power for, the most
-  oversold names (lowest RSI at the signal) are filled first.
+* When several signals target the same entry date, a causal cross-sectional
+  ranking admits only the configured number of candidates (one by default).
 
 No look-ahead bias
 ------------------
@@ -35,6 +35,7 @@ from .types import (
     Execution,
     InstrumentType,
     PortfolioConfig,
+    PortfolioEntryRanking,
     PortfolioSizing,
     StrategyConfig,
     Trade,
@@ -204,6 +205,30 @@ class PortfolioEngine:
         # Build causal signal frames per ticker.
         frames = {t: build_signal_frame(df, cfg) for t, df in self.data_by_ticker.items()}
 
+        if pf.max_entries_per_date < 0:
+            raise ValueError("max_entries_per_date must be zero or greater")
+        if pf.ranking_lookback < 2:
+            raise ValueError("ranking_lookback must be at least 2")
+
+        # Cross-sectional ranking inputs.  Every value at bar i uses only data
+        # available through that bar's close, so selection remains causal.
+        for frame in frames.values():
+            lookback = pf.ranking_lookback
+            close = frame["close"].astype(float)
+            trend_sma = close.rolling(lookback, min_periods=lookback).mean()
+            frame["rank_trend"] = (close / trend_sma).replace([np.inf, -np.inf], np.nan)
+            frame["rank_volatility"] = close.pct_change(fill_method=None).rolling(
+                lookback, min_periods=lookback
+            ).std()
+            if "volume" in frame:
+                volume = pd.to_numeric(frame["volume"], errors="coerce")
+                average_volume = volume.rolling(lookback, min_periods=lookback).mean()
+                frame["rank_relative_volume"] = (volume / average_volume).replace(
+                    [np.inf, -np.inf], np.nan
+                )
+            else:
+                frame["rank_relative_volume"] = np.nan
+
         # Common (union) calendar across all assets.
         union = pd.DatetimeIndex(sorted(set().union(*[f.index for f in frames.values()])))
         n = len(union)
@@ -264,6 +289,9 @@ class PortfolioEngine:
                 "rsi_cum": f["rsi_cum"].reindex(union).to_numpy(dtype=float),
                 "sma": f["sma_exit"].reindex(union).to_numpy(dtype=float),
                 "atr_mult": f["atr_mult"].reindex(union).to_numpy(dtype=float),
+                "rank_trend": f["rank_trend"].reindex(union).to_numpy(dtype=float),
+                "rank_volatility": f["rank_volatility"].reindex(union).to_numpy(dtype=float),
+                "rank_relative_volume": f["rank_relative_volume"].reindex(union).to_numpy(dtype=float),
                 "signal": f["entry_signal"].reindex(union).fillna(False).to_numpy(dtype=bool),
                 "pattern": f["pattern"].reindex(union).fillna("").to_numpy(dtype=object),
                 "dividend": (f["dividend"].reindex(union).fillna(0.0).to_numpy(dtype=float)
@@ -434,6 +462,9 @@ class PortfolioEngine:
                     "signal_body_percentile": sig_body_pct,
                     "signal_atr_mult": sig_atr_mult,
                     "rsi_at_signal": float(arr[t]["rsi"][i]),
+                    "rank_trend": float(arr[t]["rank_trend"][i]),
+                    "rank_volatility": float(arr[t]["rank_volatility"][i]),
+                    "rank_relative_volume": float(arr[t]["rank_relative_volume"][i]),
                     "pattern": str(arr[t]["pattern"][i]),
                 }
                 if cfg.entry_execution == Execution.SIGNAL_CLOSE:
@@ -557,7 +588,8 @@ class PortfolioEngine:
                       equity_base, long_value, positions, unlimited, limit=False) -> float:
         """Fill ranked entry candidates; return new cash.
 
-        Candidates are sorted by RSI ascending (most oversold first).
+        Candidates are ranked with signal-close information only.  At most
+        ``max_entries_per_date`` are considered for this fill date.
 
         * PERCENT mode: each position is ``pct_per_trade`` percent of ``equity_base``
           (notional), filled only while total long exposure stays within
@@ -568,8 +600,27 @@ class PortfolioEngine:
         """
         pf = self.portfolio
         full_equity = pf.sizing_mode == PortfolioSizing.FULL_EQUITY
-        # Most oversold first (irrelevant for FULL_EQUITY, which fills everything).
-        candidates = sorted(candidates, key=lambda x: x[1]["rsi_at_signal"])
+        ranking = pf.entry_ranking
+        if not isinstance(ranking, PortfolioEntryRanking):
+            ranking = PortfolioEntryRanking(ranking)
+        rank_fields = {
+            PortfolioEntryRanking.LOWEST_RSI: ("rsi_at_signal", False),
+            PortfolioEntryRanking.LARGEST_HAMMER_ATR: ("signal_atr_mult", True),
+            PortfolioEntryRanking.HIGHEST_RELATIVE_VOLUME: ("rank_relative_volume", True),
+            PortfolioEntryRanking.STRONGEST_TREND: ("rank_trend", True),
+            PortfolioEntryRanking.HIGHEST_VOLATILITY: ("rank_volatility", True),
+        }
+        field, descending = rank_fields[ranking]
+
+        def _rank_key(item):
+            value = float(item[1].get(field, np.nan))
+            missing = not np.isfinite(value)
+            ordered = -value if descending and not missing else value
+            return missing, ordered, item[0]
+
+        candidates = sorted(candidates, key=_rank_key)
+        if pf.max_entries_per_date > 0:
+            candidates = candidates[:pf.max_entries_per_date]
         buying_power = equity_base * pf.leverage
         notional_target = equity_base if full_equity else equity_base * (pf.pct_per_trade / 100.0)
 

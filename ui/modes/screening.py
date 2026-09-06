@@ -1,10 +1,10 @@
-"""Market screening mode (scan an index for live entry signals via yfinance)."""
+"""Market screening mode using Norgate current constituents and OHLC data."""
 from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
 
-from src import screener
+from src import norgate_loader, screener
 from src.utils import fmt_money, fmt_num
 from ui.params_form import configuration_form
 
@@ -20,7 +20,12 @@ def run_screening_mode() -> None:
         "Scan an index for tickers **currently firing the entry signal** on the chosen "
         "timeframe. The conditions are exactly the entry rules below — RSI(period) below "
         "threshold **and** a percentile hammer (plus the optional ATR and price filters). "
-        "Exits, sizing and costs are ignored here. Data: Yahoo Finance via `yfinance`.")
+        "Exits, sizing and costs are ignored here. Constituents and adjusted OHLC data "
+        "come from the local Norgate database.")
+
+    if not norgate_loader.is_available():
+        st.error("Norgate Data Updater não está rodando ou o pacote `norgatedata` não está instalado.")
+        return
 
     cfg, _pconf, _submitted = configuration_form("screening", with_run=False)
 
@@ -30,10 +35,14 @@ def run_screening_mode() -> None:
 
     c1, c2, c3 = st.columns(3)
     index = c1.selectbox("Index", screener.INDICES, index=1)
-    timeframe = c2.selectbox("Timeframe", list(screener.TIMEFRAMES.keys()), index=1)
+    timeframe = c2.selectbox("Timeframe", list(screener.TIMEFRAMES.keys()), index=0)
     max_tickers = c3.number_input("Max tickers (0 = all)", min_value=0, max_value=5000, value=0, step=50)
-    ignore_last = st.checkbox("Evaluate the last fully-closed candle (ignore the in-progress one)",
-                              value=True)
+    ignore_last = st.checkbox(
+        "Ignore the latest candle if it may still be in progress",
+        value=timeframe != "Daily",
+        help=("Norgate daily bars are end-of-day data, so the latest available daily candle is used "
+              "by default. Weekly and monthly screens ignore the current partial period by default."),
+    )
     st.caption("Entry condition recap: "
                f"RSI({cfg.rsi_period}) < {cfg.rsi_entry_threshold:g} · hammer percentile "
                f"{cfg.patterns.hammer.percentile:g}"
@@ -66,7 +75,7 @@ def run_screening_mode() -> None:
             progress=lambda p: bar.progress(min(p, 1.0), text="Baixando dados e procurando sinais…"))
     except ImportError:
         bar.empty()
-        st.error("Dependências do screening ausentes. Execute `pip install -r requirements-screening.txt`.")
+        st.error("Pacote Norgate ausente. Execute `pip install -r requirements-norgate.txt`.")
         return
     except Exception as exc:
         bar.empty()

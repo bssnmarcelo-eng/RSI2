@@ -11,6 +11,7 @@ import streamlit as st
 from src.types import (
     CommissionModel,
     CostConfig,
+    EntrySelectionConfig,
     Execution,
     ExitConfig,
     HammerParams,
@@ -20,6 +21,7 @@ from src.types import (
     OptionSizingMode,
     PatternConfig,
     PortfolioConfig,
+    PortfolioEntryRanking,
     PortfolioSizing,
     SizingConfig,
     SizingMethod,
@@ -298,6 +300,45 @@ def _portfolio_tab() -> PortfolioConfig:
     cap = st.number_input("Max simultaneous positions (0 = unlimited)", min_value=0,
                           max_value=500, value=0, step=1, key="p_pf_maxpos")
 
+    st.markdown("#### Seleção entre sinais simultâneos")
+    s1, s2 = st.columns(2)
+    max_entries_per_date = s1.number_input(
+        "Máximo de novas entradas por data",
+        min_value=1,
+        max_value=100,
+        value=1,
+        step=1,
+        key="p_pf_max_entries_date",
+        help="Na estratégia semanal, 1 significa comprar somente o melhor ativo na abertura seguinte.",
+    )
+    ranking_labels = {
+        "Menor RSI(2)": PortfolioEntryRanking.LOWEST_RSI,
+        "Maior Hammer em ATR": PortfolioEntryRanking.LARGEST_HAMMER_ATR,
+        "Maior volume relativo": PortfolioEntryRanking.HIGHEST_RELATIVE_VOLUME,
+        "Tendência mais forte": PortfolioEntryRanking.STRONGEST_TREND,
+        "Maior volatilidade": PortfolioEntryRanking.HIGHEST_VOLATILITY,
+    }
+    ranking_label = s2.selectbox(
+        "Critério para escolher o melhor ativo",
+        list(ranking_labels),
+        index=0,
+        key="p_pf_entry_ranking",
+    )
+    ranking_lookback = st.number_input(
+        "Janela do ranking (barras)",
+        min_value=2,
+        max_value=260,
+        value=20,
+        step=1,
+        key="p_pf_ranking_lookback",
+        help=("Usada por volume relativo, tendência (fechamento/MM) e volatilidade. "
+              "RSI e Hammer em ATR não dependem desta janela."),
+    )
+    st.caption(
+        "O ranking usa somente informações conhecidas no fechamento do sinal. "
+        "Empates são resolvidos pelo ticker em ordem alfabética."
+    )
+
     st.markdown("#### Filtro de breadth")
     use_breadth = st.checkbox(
         "Permitir novas entradas somente com breadth suficiente",
@@ -330,20 +371,73 @@ def _portfolio_tab() -> PortfolioConfig:
             initial_capital=float(initial_capital),
             sizing_mode=PortfolioSizing.FULL_EQUITY,
             allow_fractional=bool(allow_fractional),
+            max_entries_per_date=int(max_entries_per_date),
+            entry_ranking=ranking_labels[ranking_label],
+            ranking_lookback=int(ranking_lookback),
             use_breadth_filter=bool(use_breadth),
             breadth_sma_period=int(breadth_period),
             breadth_threshold_pct=float(breadth_threshold))
 
     st.caption(
-        f"Up to ~{int((leverage * 100) // pct_per_trade) if pct_per_trade else 0} positions fit at "
-        f"{pct_per_trade:g}% each with {leverage:g}× leverage. Ties broken by most oversold (lowest RSI).")
+        f"Até ~{int((leverage * 100) // pct_per_trade) if pct_per_trade else 0} posições simultâneas "
+        f"cabem com {pct_per_trade:g}% por operação e alavancagem {leverage:g}×. "
+        f"No máximo {int(max_entries_per_date)} nova(s) entrada(s) será(ão) aceita(s) por data.")
     return PortfolioConfig(
         initial_capital=float(initial_capital), sizing_mode=PortfolioSizing.PERCENT,
         pct_per_trade=float(pct_per_trade), leverage=float(leverage),
         max_positions=int(cap), allow_fractional=bool(allow_fractional),
+        max_entries_per_date=int(max_entries_per_date),
+        entry_ranking=ranking_labels[ranking_label],
+        ranking_lookback=int(ranking_lookback),
         use_breadth_filter=bool(use_breadth),
         breadth_sma_period=int(breadth_period),
         breadth_threshold_pct=float(breadth_threshold))
+
+
+def _per_asset_selection_tab() -> EntrySelectionConfig:
+    """Selection widgets for the consolidated independent-asset trade log."""
+    st.markdown("#### Seleção entre sinais simultâneos")
+    c1, c2 = st.columns(2)
+    max_entries = c1.number_input(
+        "Máximo de novas entradas por data",
+        min_value=1,
+        max_value=100,
+        value=1,
+        step=1,
+        key="pa_max_entries_date",
+    )
+    labels = {
+        "Menor RSI(2)": PortfolioEntryRanking.LOWEST_RSI,
+        "Maior Hammer em ATR": PortfolioEntryRanking.LARGEST_HAMMER_ATR,
+        "Maior volume relativo": PortfolioEntryRanking.HIGHEST_RELATIVE_VOLUME,
+        "Tendência mais forte": PortfolioEntryRanking.STRONGEST_TREND,
+        "Maior volatilidade": PortfolioEntryRanking.HIGHEST_VOLATILITY,
+    }
+    ranking_label = c2.selectbox(
+        "Critério para escolher o melhor ativo",
+        list(labels),
+        index=0,
+        key="pa_entry_ranking",
+    )
+    lookback = st.number_input(
+        "Janela do ranking (barras)",
+        min_value=2,
+        max_value=260,
+        value=20,
+        step=1,
+        key="pa_ranking_lookback",
+        help=("Usada por volume relativo, tendência e volatilidade. "
+              "RSI e Hammer em ATR não dependem desta janela."),
+    )
+    st.caption(
+        "O limite é aplicado ao consolidado de operações independentes. "
+        "Empates são resolvidos pelo ticker em ordem alfabética."
+    )
+    return EntrySelectionConfig(
+        max_entries_per_date=int(max_entries),
+        entry_ranking=labels[ranking_label],
+        ranking_lookback=int(lookback),
+    )
 
 
 def configuration_form(mode: str, *, with_run: bool):
@@ -371,8 +465,14 @@ def configuration_form(mode: str, *, with_run: bool):
             with tab_e:
                 e = _entry_tab()
         else:
+            if mode == "portfolio":
+                sizing_tab_label = "💰 Carteira e seleção"
+            elif mode == "per_asset":
+                sizing_tab_label = "💰 Sizing e seleção"
+            else:
+                sizing_tab_label = "💰 Sizing"
             tab_e, tab_x, tab_c, tab_o, tab_s = st.tabs(
-                ["📥 Entrada", "🚪 Saídas", "🧾 Custos", "Opções ATM", "💰 Sizing"])
+                ["📥 Entrada", "🚪 Saídas", "🧾 Custos", "Opções ATM", sizing_tab_label])
             with tab_e:
                 e = _entry_tab()
             with tab_x:
@@ -386,6 +486,8 @@ def configuration_form(mode: str, *, with_run: bool):
                     pconf = _portfolio_tab()
                 else:
                     init_cap, sizing = _single_sizing_tab()
+                    if mode == "per_asset":
+                        pconf = _per_asset_selection_tab()
         submitted = st.form_submit_button(submit_label, type="primary")
 
     cfg = StrategyConfig(

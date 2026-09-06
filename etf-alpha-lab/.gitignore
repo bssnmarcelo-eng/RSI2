@@ -1,0 +1,8 @@
+.norgate/
+.pytest_cache/
+pytest-cache-files-*/
+.ruff_cache/
+__pycache__/
+*.py[cod]
+.venv/
+orders/*.csv

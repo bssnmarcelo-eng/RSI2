@@ -7,7 +7,7 @@ import streamlit as st
 from src import logger
 from src.performance_metrics import compute_metrics
 from src.portfolio_engine import PortfolioEngine
-from src.types import PortfolioSizing
+from src.types import PortfolioEntryRanking, PortfolioSizing
 from src.utils import fmt_money
 from ui.data_source import _resolve_norgate_pending, collect_multi_asset_data
 from ui.params_form import configuration_form
@@ -21,7 +21,21 @@ def _render_portfolio_results() -> None:
     if res is None:
         return
     meta = st.session_state.get("_portfolio_meta", {})
+    ranking_names = {
+        PortfolioEntryRanking.LOWEST_RSI: "menor RSI(2)",
+        PortfolioEntryRanking.LARGEST_HAMMER_ATR: "maior Hammer em ATR",
+        PortfolioEntryRanking.HIGHEST_RELATIVE_VOLUME: "maior volume relativo",
+        PortfolioEntryRanking.STRONGEST_TREND: "tendência mais forte",
+        PortfolioEntryRanking.HIGHEST_VOLATILITY: "maior volatilidade",
+    }
+    ranking = res.portfolio.entry_ranking
+    if not isinstance(ranking, PortfolioEntryRanking):
+        ranking = PortfolioEntryRanking(ranking)
     st.markdown("---")
+    st.info(
+        f"Seleção ativa: no máximo {res.portfolio.max_entries_per_date} nova(s) entrada(s) "
+        f"por data, priorizando {ranking_names[ranking]}."
+    )
     if meta:
         st.caption(f"Resultados de **{meta['n_assets']}** ativos "
                    f"({meta['start']} → {meta['end']}).")
