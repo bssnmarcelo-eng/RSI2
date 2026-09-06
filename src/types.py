@@ -62,6 +62,7 @@ class EntrySelectionConfig:
     max_entries_per_date: int = 1
     entry_ranking: PortfolioEntryRanking = PortfolioEntryRanking.LOWEST_RSI
     ranking_lookback: int = 20
+    minimum_candidates_per_date: int = 0
     use_trade_quality_filter: bool = False
     quality_trend_period: int = 10
     quality_min_trend_pct: float = -3.0
@@ -258,6 +259,7 @@ class PortfolioConfig:
     max_entries_per_date: int = 1
     entry_ranking: PortfolioEntryRanking = PortfolioEntryRanking.LOWEST_RSI
     ranking_lookback: int = 20
+    minimum_candidates_per_date: int = 0
 
     # Experimental high-precision gate. It compares only candidates targeting
     # the same entry date and uses data available at the signal close.

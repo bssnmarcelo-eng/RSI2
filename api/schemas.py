@@ -101,6 +101,7 @@ class BacktestRequest(BaseModel):
         "strongest_trend", "highest_volatility",
     ] = "lowest_rsi"
     ranking_lookback: int = Field(default=20, ge=2, le=500)
+    minimum_candidates_per_date: int = Field(default=0, ge=0, le=1_000)
     use_trade_quality_filter: bool = False
     quality_trend_period: int = Field(default=10, ge=2, le=500)
     quality_min_trend_pct: float = Field(default=-3.0, ge=-100, le=1_000)
@@ -157,6 +158,7 @@ class NorgateBacktestRequest(BaseModel):
         "strongest_trend", "highest_volatility",
     ] = "lowest_rsi"
     ranking_lookback: int = Field(default=20, ge=2, le=500)
+    minimum_candidates_per_date: int = Field(default=0, ge=0, le=1_000)
     use_trade_quality_filter: bool = False
     quality_trend_period: int = Field(default=10, ge=2, le=500)
     quality_min_trend_pct: float = Field(default=-3.0, ge=-100, le=1_000)

@@ -217,6 +217,21 @@ def test_only_lowest_rsi_candidate_enters_on_the_same_date(monkeypatch):
     assert result.trades["entry_date"].tolist() == [dates[1]]
 
 
+def test_minimum_candidates_rejects_sparse_portfolio_signal_date(monkeypatch):
+    _identity_signal_builder(monkeypatch)
+    dates = pd.date_range("2024-01-05", periods=3, freq="W-FRI")
+    a = _frame(dates, [100, 100, 101], signal_at=0)
+    b = _frame(dates, [100, 100, 101], signal_at=0)
+    pf = _portfolio(
+        max_entries_per_date=2,
+        minimum_candidates_per_date=3,
+    )
+
+    result = PortfolioEngine({"AAA": a, "BBB": b}, make_config(), pf).run()
+
+    assert result.trades.empty
+
+
 def test_largest_hammer_atr_can_override_lowest_rsi(monkeypatch):
     _identity_signal_builder(monkeypatch)
     dates = pd.date_range("2024-01-05", periods=3, freq="W-FRI")

@@ -138,3 +138,35 @@ def test_trade_quality_filter_does_not_promote_next_range_after_trend_rejection(
     selected = select_trades_per_entry_date(pd.DataFrame(rows), results, selection)
 
     assert selected.empty
+
+
+def test_minimum_candidates_rejects_sparse_entry_dates():
+    dates = pd.date_range("2024-01-05", periods=12, freq="W-FRI")
+    rows = []
+    results = {}
+    for number in range(1, 4):
+        ticker = f"T{number:02d}"
+        results[ticker] = _result(dates, [100.0] * 12, [100.0] * 12)
+        rows.append({
+            "ticker": ticker,
+            "signal_date": dates[10],
+            "entry_date": dates[11],
+            "signal_close": 100.0,
+            "signal_range": 1.0,
+            "rsi_at_signal": float(number),
+            "signal_atr_mult": 1.0,
+        })
+
+    rejected = select_trades_per_entry_date(
+        pd.DataFrame(rows),
+        results,
+        EntrySelectionConfig(max_entries_per_date=10, minimum_candidates_per_date=4),
+    )
+    admitted = select_trades_per_entry_date(
+        pd.DataFrame(rows),
+        results,
+        EntrySelectionConfig(max_entries_per_date=10, minimum_candidates_per_date=3),
+    )
+
+    assert rejected.empty
+    assert admitted["ticker"].tolist() == ["T01", "T02", "T03"]

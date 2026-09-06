@@ -26,6 +26,8 @@ def select_trades_per_entry_date(
         raise ValueError("max_entries_per_date must be zero or greater")
     if selection.ranking_lookback < 2:
         raise ValueError("ranking_lookback must be at least 2")
+    if selection.minimum_candidates_per_date < 0:
+        raise ValueError("minimum_candidates_per_date must be zero or greater")
     if selection.quality_trend_period < 2:
         raise ValueError("quality_trend_period must be at least 2")
     if not 0.0 < selection.quality_max_range_rank_pct <= 100.0:
@@ -84,6 +86,12 @@ def select_trades_per_entry_date(
     work["_rank_relative_volume"] = relative_volume
     work["_quality_trend"] = quality_trend
     work["_entry_date"] = pd.to_datetime(work["entry_date"])
+
+    if selection.minimum_candidates_per_date > 0:
+        candidate_count = work.groupby("_entry_date")["ticker"].transform("size")
+        work = work.loc[
+            candidate_count >= selection.minimum_candidates_per_date
+        ].copy()
 
     if selection.use_trade_quality_filter:
         signal_close = pd.to_numeric(work["signal_close"], errors="coerce")

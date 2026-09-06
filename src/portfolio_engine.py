@@ -618,6 +618,12 @@ class PortfolioEngine:
         pf = self.portfolio
         full_equity = pf.sizing_mode == PortfolioSizing.FULL_EQUITY
 
+        if (
+            pf.minimum_candidates_per_date > 0
+            and len(candidates) < pf.minimum_candidates_per_date
+        ):
+            return cash
+
         if pf.use_trade_quality_filter and candidates:
             range_pct = pd.Series(
                 {ticker: meta.get("signal_range_pct", np.nan) for ticker, meta in candidates},

@@ -21,37 +21,149 @@ LOGS = ROOT / "logs"
 OUTPUT = ROOT / ".local-run"
 
 
-def _price_features(frame: pd.DataFrame) -> pd.DataFrame:
+def _rsi(close: pd.Series, period: int) -> pd.Series:
+    delta = close.diff()
+    gain = delta.clip(lower=0).ewm(alpha=1 / period, adjust=False).mean()
+    loss = -delta.clip(upper=0).ewm(alpha=1 / period, adjust=False).mean()
+    relative_strength = gain / loss.replace(0.0, np.nan)
+    return 100.0 - 100.0 / (1.0 + relative_strength)
+
+
+def _price_features(
+    frame: pd.DataFrame,
+    market_close: pd.Series | None = None,
+) -> pd.DataFrame:
     close = pd.to_numeric(frame["close"], errors="coerce")
     volume = pd.to_numeric(frame.get("volume"), errors="coerce")
+    open_ = pd.to_numeric(frame["open"], errors="coerce")
+    high = pd.to_numeric(frame["high"], errors="coerce")
+    low = pd.to_numeric(frame["low"], errors="coerce")
     returns = close.pct_change(fill_method=None)
     result = pd.DataFrame(index=frame.index)
-    for window in (4, 13, 26, 52):
+    for window in (1, 2, 4, 13, 26, 52):
         result[f"momentum_{window}"] = close.pct_change(window, fill_method=None)
-    for window in (10, 20, 40):
+    for window in (5, 10, 20, 40):
         average = close.rolling(window, min_periods=window).mean()
         result[f"trend_{window}"] = close / average - 1.0
-    for window in (10, 20, 52):
+        result[f"sma_slope_{window}"] = average.pct_change(4, fill_method=None)
+    for window in (4, 10, 20, 52):
         result[f"volatility_{window}"] = returns.rolling(window, min_periods=window).std()
     for window in (10, 20, 52):
         average_volume = volume.rolling(window, min_periods=window).mean()
         result[f"relative_volume_{window}"] = volume / average_volume
+        volume_std = volume.rolling(window, min_periods=window).std()
+        result[f"volume_z_{window}"] = (volume - average_volume) / volume_std
     result["drawdown_52"] = close / close.rolling(52, min_periods=20).max() - 1.0
-    result["range_pct"] = (
-        pd.to_numeric(frame["high"], errors="coerce")
-        - pd.to_numeric(frame["low"], errors="coerce")
-    ) / close
+    candle_range = high - low
+    result["range_pct"] = candle_range / close
+    result["body_pct"] = (close - open_).abs() / candle_range
+    result["upper_shadow_pct"] = (high - pd.concat([open_, close], axis=1).max(axis=1)) / candle_range
+    result["lower_shadow_pct"] = (pd.concat([open_, close], axis=1).min(axis=1) - low) / candle_range
+    result["close_location"] = (close - low) / candle_range
+    result["bullish_candle"] = close.gt(open_).astype(float)
+    result["gap_from_previous_close"] = open_ / close.shift() - 1.0
+    result["inside_bar"] = (high.lt(high.shift()) & low.gt(low.shift())).astype(float)
+    for window in (4, 13):
+        result[f"range_compression_{window}"] = result["range_pct"] / result[
+            "range_pct"
+        ].rolling(window, min_periods=window).median()
+        result[f"narrowest_range_{window}"] = result["range_pct"].le(
+            result["range_pct"].rolling(window, min_periods=window).min()
+        ).astype(float)
+
+    result["rsi_14"] = _rsi(close, 14)
+    result["bollinger_z_20"] = (
+        (close - close.rolling(20, min_periods=20).mean())
+        / close.rolling(20, min_periods=20).std()
+    )
+    result["stochastic_13"] = (
+        (close - low.rolling(13, min_periods=13).min())
+        / (high.rolling(13, min_periods=13).max() - low.rolling(13, min_periods=13).min())
+    )
+    previous_close = close.shift()
+    true_range = pd.concat(
+        [candle_range, (high - previous_close).abs(), (low - previous_close).abs()], axis=1
+    ).max(axis=1)
+    result["atr_pct_14"] = true_range.rolling(14, min_periods=14).mean() / close
+    result["return_z_20"] = (
+        (returns - returns.rolling(20, min_periods=20).mean())
+        / returns.rolling(20, min_periods=20).std()
+    )
+    result["return_skew_20"] = returns.rolling(20, min_periods=20).skew()
+    result["return_kurt_20"] = returns.rolling(20, min_periods=20).kurt()
+    result["downside_volatility_20"] = returns.clip(upper=0).pow(2).rolling(
+        20, min_periods=20
+    ).mean().pow(0.5)
+    result["return_autocorr_20"] = returns.rolling(20, min_periods=20).apply(
+        lambda values: pd.Series(values).autocorr(lag=1), raw=False
+    )
+
+    if market_close is not None:
+        market = market_close.reindex(frame.index).ffill()
+        market_returns = market.pct_change(fill_method=None)
+        for window in (4, 13, 26, 52):
+            result[f"relative_momentum_{window}"] = (
+                close.pct_change(window, fill_method=None)
+                - market.pct_change(window, fill_method=None)
+            )
+        covariance = returns.rolling(52, min_periods=26).cov(market_returns)
+        result["market_beta_52"] = covariance / market_returns.rolling(
+            52, min_periods=26
+        ).var()
+        result["market_correlation_52"] = returns.rolling(
+            52, min_periods=26
+        ).corr(market_returns)
     return result.replace([np.inf, -np.inf], np.nan)
+
+
+def _market_features() -> tuple[pd.Series, pd.DataFrame]:
+    market_frame, _ = fetch_price(
+        "$NDX",
+        adjustment_label="Capital (apenas splits)",
+        start_date="1990-01-01",
+        end_date="2026-09-04",
+        frequency_label="Semanal",
+    )
+    close = market_frame["close"].astype(float)
+    result = pd.DataFrame(index=market_frame.index)
+    for window in (1, 4, 13, 26, 52):
+        result[f"market_momentum_{window}"] = close.pct_change(window, fill_method=None)
+    for window in (10, 20, 40):
+        result[f"market_trend_{window}"] = (
+            close / close.rolling(window, min_periods=window).mean() - 1.0
+        )
+    for window in (10, 20, 52):
+        result[f"market_volatility_{window}"] = close.pct_change(
+            fill_method=None
+        ).rolling(window, min_periods=window).std()
+    result["market_drawdown_52"] = close / close.rolling(52, min_periods=20).max() - 1.0
+    for symbol, name in (
+        ("#NDX%MA20", "breadth_ma20"),
+        ("#NDX%MA50", "breadth_ma50"),
+        ("#NDX%MA200", "breadth_ma200"),
+        ("#NDXTRIN", "market_trin"),
+    ):
+        frame, _ = fetch_price(
+            symbol,
+            adjustment_label="Capital (apenas splits)",
+            start_date="1990-01-01",
+            end_date="2026-09-04",
+            frequency_label="Semanal",
+        )
+        if not frame.empty:
+            result[name] = frame["close"].reindex(result.index).ffill()
+    return close, result
 
 
 def enrich(run_id: str, refresh: bool = False) -> pd.DataFrame:
     OUTPUT.mkdir(exist_ok=True)
-    cache = OUTPUT / f"{run_id}-causal-features.csv"
+    cache = OUTPUT / f"{run_id}-causal-features-v2.csv"
     if cache.exists() and not refresh:
         return pd.read_csv(cache, parse_dates=["signal_date", "entry_date", "exit_date"])
 
     path = LOGS / run_id / "all_operations.csv"
     trades = pd.read_csv(path, parse_dates=["signal_date", "entry_date", "exit_date"])
+    market_close, market_metrics = _market_features()
     feature_rows: list[dict[str, float]] = []
     tickers = trades["ticker"].drop_duplicates().tolist()
     for number, ticker in enumerate(tickers, start=1):
@@ -62,7 +174,9 @@ def enrich(run_id: str, refresh: bool = False) -> pd.DataFrame:
             end_date="2026-09-04",
             frequency_label="Semanal",
         )
-        metrics = _price_features(frame) if not frame.empty else pd.DataFrame()
+        metrics = (
+            _price_features(frame, market_close) if not frame.empty else pd.DataFrame()
+        )
         ticker_trades = trades.loc[trades["ticker"] == ticker, ["signal_date"]]
         for index, row in ticker_trades.iterrows():
             values: dict[str, float] = {"_row": index}
@@ -74,14 +188,15 @@ def enrich(run_id: str, refresh: bool = False) -> pd.DataFrame:
 
     features = pd.DataFrame(feature_rows).set_index("_row")
     enriched = trades.join(features)
+    for column in market_metrics:
+        enriched[column] = enriched["signal_date"].map(market_metrics[column])
     enriched["candidate_count"] = enriched.groupby("entry_date")["ticker"].transform("size")
 
     rank_columns = [
-        "rsi_at_signal", "signal_body_percentile", "signal_atr_mult",
-        "momentum_4", "momentum_13", "momentum_26", "momentum_52",
-        "trend_10", "trend_20", "trend_40", "volatility_10",
-        "volatility_20", "volatility_52", "relative_volume_10",
-        "relative_volume_20", "relative_volume_52", "drawdown_52", "range_pct",
+        "rsi_at_signal",
+        "signal_body_percentile",
+        "signal_atr_mult",
+        *[column for column in features.columns if not column.startswith("market_")],
     ]
     for column in rank_columns:
         enriched[f"xrank_{column}"] = enriched.groupby("entry_date")[column].rank(

@@ -338,6 +338,16 @@ def _portfolio_tab() -> PortfolioConfig:
         "O ranking usa somente informações conhecidas no fechamento do sinal. "
         "Empates são resolvidos pelo ticker em ordem alfabética."
     )
+    minimum_candidates = st.number_input(
+        "Mínimo de candidatos simultâneos",
+        min_value=0,
+        max_value=1_000,
+        value=0,
+        step=1,
+        key="p_pf_minimum_candidates",
+        help=("Zero desativa. O estudo ampliado encontrou melhora fora da amostra com "
+              "10 ou mais sinais na mesma data, sem atingir 95%."),
+    )
 
     st.markdown("#### Filtro estatístico de alta precisão (experimental)")
     use_quality_filter = st.checkbox(
@@ -404,6 +414,7 @@ def _portfolio_tab() -> PortfolioConfig:
             max_entries_per_date=int(max_entries_per_date),
             entry_ranking=ranking_labels[ranking_label],
             ranking_lookback=int(ranking_lookback),
+            minimum_candidates_per_date=int(minimum_candidates),
             use_trade_quality_filter=bool(use_quality_filter),
             quality_trend_period=int(quality_period),
             quality_min_trend_pct=float(quality_min_trend),
@@ -423,6 +434,7 @@ def _portfolio_tab() -> PortfolioConfig:
         max_entries_per_date=int(max_entries_per_date),
         entry_ranking=ranking_labels[ranking_label],
         ranking_lookback=int(ranking_lookback),
+        minimum_candidates_per_date=int(minimum_candidates),
         use_trade_quality_filter=bool(use_quality_filter),
         quality_trend_period=int(quality_period),
         quality_min_trend_pct=float(quality_min_trend),
@@ -471,6 +483,16 @@ def _per_asset_selection_tab() -> EntrySelectionConfig:
         "O limite é aplicado ao consolidado de operações independentes. "
         "Empates são resolvidos pelo ticker em ordem alfabética."
     )
+    minimum_candidates = st.number_input(
+        "Mínimo de candidatos simultâneos",
+        min_value=0,
+        max_value=1_000,
+        value=0,
+        step=1,
+        key="pa_minimum_candidates",
+        help=("Zero desativa. O limiar 10 elevou a taxa fora da amostra, mas não "
+              "produziu 95% no teste final."),
+    )
     use_quality_filter = st.checkbox(
         "Filtro experimental de alta precisão",
         value=False,
@@ -502,6 +524,7 @@ def _per_asset_selection_tab() -> EntrySelectionConfig:
         max_entries_per_date=int(max_entries),
         entry_ranking=labels[ranking_label],
         ranking_lookback=int(lookback),
+        minimum_candidates_per_date=int(minimum_candidates),
         use_trade_quality_filter=bool(use_quality_filter),
         quality_trend_period=int(quality_period),
         quality_min_trend_pct=float(quality_min_trend),
