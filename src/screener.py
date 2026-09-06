@@ -1,15 +1,19 @@
-"""Market screening: scan an index for tickers currently firing the entry signal.
+"""Market screening: scan a universe for tickers currently firing the entry signal.
 
-Constituents are scraped from Wikipedia; OHLC bars are downloaded with yfinance;
-the strategy's own :func:`build_signal_frame` is then run on each ticker so the
-screen is IDENTICAL to the backtest entry condition (RSI(period) < threshold AND
+For each ticker the strategy's own :func:`build_signal_frame` is run so the screen
+is IDENTICAL to the backtest entry condition (RSI(period) < threshold AND
 percentile hammer, plus the optional ATR and price filters). A "hit" is a ticker
 whose ``entry_signal`` is True on the evaluated candle.
 
-External data (yfinance / Wikipedia) is only used here, in the screening mode.
+Two data sources are supported:
+  - **Norgate Data** (:func:`run_screen_norgate`) — the primary, fully-local path:
+    OHLC comes from a Norgate watchlist/database via :mod:`src.norgate_loader`.
+  - **Yahoo Finance** (:func:`run_screen`) — the legacy path: constituents are
+    scraped from Wikipedia and OHLC is downloaded with yfinance (external data).
 """
 from __future__ import annotations
 
+import datetime
 import io
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -155,17 +159,14 @@ def evaluate(df: pd.DataFrame, cfg: StrategyConfig, ignore_last: bool) -> Option
     }
 
 
-def run_screen(tickers: List[str], timeframe: str, cfg: StrategyConfig,
-               ignore_last: bool = True,
-               progress: Optional[Callable[[float], None]] = None) -> Tuple[pd.DataFrame, int, int]:
-    """Screen ``tickers`` on ``timeframe``. Returns (hits_df, n_scanned, n_errors).
+def _screen_data(ohlc: Dict[str, pd.DataFrame], tickers: List[str],
+                 cfg: StrategyConfig, ignore_last: bool) -> Tuple[pd.DataFrame, int]:
+    """Run :func:`evaluate` on each ticker's OHLC and collect the hits.
 
-    ``hits_df`` rows are tickers whose entry_signal is True on the evaluated candle,
-    sorted by RSI ascending (most oversold first).
+    Returns ``(hits_df, n_scanned)`` where *n_scanned* counts tickers that had
+    enough data to be evaluated. ``hits_df`` is sorted by RSI ascending
+    (most oversold first).
     """
-    interval, period = TIMEFRAMES[timeframe]
-    ohlc = fetch_ohlc(tickers, interval, period, progress=progress)
-
     hits: List[dict] = []
     scanned = 0
     for t in tickers:
@@ -180,8 +181,67 @@ def run_screen(tickers: List[str], timeframe: str, cfg: StrategyConfig,
             hits.append({"ticker": t, "date": ev["date"], "close": ev["close"],
                          "rsi": ev["rsi"], "body_percentile": ev["body_percentile"],
                          "range": ev["range"], "pattern": ev["pattern"]})
-    errors = len(tickers) - scanned
     hits_df = pd.DataFrame(hits)
     if not hits_df.empty:
         hits_df = hits_df.sort_values("rsi").reset_index(drop=True)
-    return hits_df, scanned, errors
+    return hits_df, scanned
+
+
+def run_screen(tickers: List[str], timeframe: str, cfg: StrategyConfig,
+               ignore_last: bool = True,
+               progress: Optional[Callable[[float], None]] = None) -> Tuple[pd.DataFrame, int, int]:
+    """Screen ``tickers`` on ``timeframe`` via yfinance. Returns (hits_df, scanned, errors).
+
+    ``hits_df`` rows are tickers whose entry_signal is True on the evaluated candle,
+    sorted by RSI ascending (most oversold first).
+    """
+    interval, period = TIMEFRAMES[timeframe]
+    ohlc = fetch_ohlc(tickers, interval, period, progress=progress)
+    hits_df, scanned = _screen_data(ohlc, tickers, cfg, ignore_last)
+    return hits_df, scanned, len(tickers) - scanned
+
+
+# ── Norgate path ──────────────────────────────────────────────────────────────
+
+# Screening timeframe -> (norgate frequency label, warmup lookback in days). The
+# lookback is generous enough to leave >100 bars for RSI/ATR warmup at each freq.
+NORGATE_TIMEFRAMES: Dict[str, str] = {
+    "Daily":   "Diário",
+    "Weekly":  "Semanal",
+    "Monthly": "Mensal",
+}
+
+_NORGATE_LOOKBACK_DAYS: Dict[str, int] = {
+    "Daily":   400,
+    "Weekly":  365 * 4,
+    "Monthly": 365 * 14,
+}
+
+
+def run_screen_norgate(tickers: List[str], timeframe: str, cfg: StrategyConfig,
+                       adjustment_label: str = "Total Return (splits + dividendos)",
+                       ignore_last: bool = True,
+                       progress: Optional[Callable[[float], None]] = None,
+                       ) -> Tuple[pd.DataFrame, int, int]:
+    """Screen ``tickers`` on ``timeframe`` using Norgate Data.
+
+    Fetches a warmup window of OHLC for each ticker via :mod:`src.norgate_loader`,
+    then runs the exact backtest entry logic. Returns (hits_df, scanned, errors).
+    """
+    from . import norgate_loader
+
+    freq_label = NORGATE_TIMEFRAMES[timeframe]
+    end = datetime.date.today()
+    start = end - datetime.timedelta(days=_NORGATE_LOOKBACK_DAYS[timeframe])
+
+    ohlc, _warns, _skipped = norgate_loader.fetch_many(
+        tickers,
+        adjustment_label=adjustment_label,
+        start_date=str(start),
+        end_date=str(end),
+        min_bars=_min_bars(cfg),
+        frequency_label=freq_label,
+        progress=progress,
+    )
+    hits_df, scanned = _screen_data(ohlc, tickers, cfg, ignore_last)
+    return hits_df, scanned, len(tickers) - scanned

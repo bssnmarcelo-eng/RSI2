@@ -15,3 +15,6 @@ Thumbs.db
 logs/*
 !logs/.gitkeep
 .local-run/
+
+# Claude Code local (per-machine) settings
+.claude/settings.local.json

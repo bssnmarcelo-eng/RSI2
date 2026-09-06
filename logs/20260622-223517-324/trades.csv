@@ -1,0 +1,2 @@
+ticker,signal_date,signal_close,rsi_at_signal,signal_range,signal_body_percentile,signal_atr_mult,pattern,entry_date,entry_price,exit_date,exit_price,exit_reason,bars_held,gross_return,net_return,pnl,equity_after
+A,2011-08-12,22.911645889282227,1.3851431906370522,3.2649574279785156,0.28875940688570595,1.4114268990151186,Hammer,2011-08-19,23.234346389770508,2011-09-23,22.40545082092285,RSI > 70,5,-0.03567544164756875,-0.0360980706934564,-3609.807065735833,96390.19293426417

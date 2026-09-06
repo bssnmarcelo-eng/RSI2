@@ -1,0 +1,81 @@
+{
+  "run_id": "20260622-223458-787",
+  "timestamp": "2026-06-22T22:34:58",
+  "mode": "Single asset",
+  "meta": {
+    "ticker": "A",
+    "start": "1999-11-19",
+    "end": "2026-06-22",
+    "candles": 1389
+  },
+  "config": {
+    "rsi_period": 2,
+    "rsi_entry_threshold": 10.0,
+    "min_price": 0.0,
+    "max_price": 0.0,
+    "patterns": {
+      "use_hammer": true,
+      "hammer": {
+        "percentile": 0.33,
+        "require_bullish_close": false,
+        "use_atr_filter": true,
+        "atr_period": 14,
+        "atr_multiple": 1.0
+      }
+    },
+    "entry_execution": "next_open",
+    "exit_execution": "next_open",
+    "exits": {
+      "use_rsi_exit": true,
+      "rsi_exit_threshold": 70.0,
+      "use_max_bars": true,
+      "max_bars": 5,
+      "use_profit_target": false,
+      "profit_target_pct": 5.0,
+      "use_stop_loss": false,
+      "stop_loss_pct": 3.0,
+      "use_sma_exit": false,
+      "sma_period": 5,
+      "use_signal_low_stop": false,
+      "use_rsi_cum_exit": false,
+      "rsi_cum_periods": 2,
+      "rsi_cum_threshold": 100.0
+    },
+    "costs": {
+      "model": "ibkr_fixed",
+      "commission_fixed": 0.0,
+      "commission_pct": 0.0,
+      "ibkr_per_share": 0.005,
+      "ibkr_min_per_order": 1.0,
+      "ibkr_max_pct": 0.01,
+      "slippage_bps": 0.0
+    },
+    "sizing": {
+      "method": "full",
+      "fixed_capital": 10000.0,
+      "percent": 100.0,
+      "allow_fractional": true
+    },
+    "initial_capital": 100000.0,
+    "ticker": "A"
+  },
+  "metrics": {
+    "final_equity": 96390.19293426417,
+    "total_return": -0.03609807065735833,
+    "cagr": -0.001381733999941348,
+    "sharpe": -0.010540901580842067,
+    "sortino": -0.0009490824082740938,
+    "max_drawdown": -0.1537769578955298,
+    "num_trades": 1,
+    "win_rate": 0.0,
+    "avg_gain": 0.0,
+    "avg_loss": -0.0360980706934564,
+    "profit_factor": 0.0,
+    "expectancy": -3609.807065735833,
+    "expectancy_return": -0.0360980706934564,
+    "avg_holding": 5.0,
+    "best_trade": -0.0360980706934564,
+    "worst_trade": -0.0360980706934564,
+    "exposure": 0.003599712023038157
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(streamlit run *)",
+      "PowerShell(git fetch --all 2>&1)",
+      "PowerShell(git pull --rebase origin master 2>&1)",
+      "PowerShell(python --version 2>&1)",
+      "PowerShell(python -c \"import streamlit; print\\('streamlit', streamlit.__version__\\)\" 2>&1)",
+      "PowerShell(streamlit run app.py --server.headless true)",
+      "PowerShell(python -c \"import ast; ast.parse\\(open\\('src/screener.py',encoding='utf-8'\\).read\\(\\)\\); ast.parse\\(open\\('ui/modes/screening.py',encoding='utf-8'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "PowerShell(python -c \"from src import screener; print\\('NORGATE_TIMEFRAMES', list\\(screener.NORGATE_TIMEFRAMES\\)\\); print\\('run_screen_norgate', callable\\(screener.run_screen_norgate\\)\\)\")",
+      "PowerShell(python -c \"import ui.modes.screening as s; print\\('screening import OK'\\); print\\(hasattr\\(s,'run_screening_mode'\\)\\)\")",
+      "PowerShell(python -c \"import norgatedata; print\\('norgatedata', getattr\\(norgatedata,'__version__','?'\\)\\)\" 2>&1)",
+      "Bash(python -c ' *)",
+      "PowerShell(git add README.md src/screener.py ui/modes/screening.py)",
+      "PowerShell(git push origin master 2>&1)",
+      "PowerShell(git add -A; git status -s | Select-Object -First 15; Write-Output \"...\"; Write-Output \"staged file count:\"; \\(git diff --cached --name-only | Measure-Object -Line\\).Lines)"
+    ],
+    "additionalDirectories": [
+      "C:\\PROGRA~1\\KMSpico\\temp\\claude\\c--Users-Usuario-rsi2\\ac8e789f-b7c6-42cc-a20e-005f2822386a\\scratchpad"
+    ]
+  }
+}
