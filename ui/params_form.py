@@ -520,6 +520,38 @@ def _per_asset_selection_tab() -> EntrySelectionConfig:
             "MM10 / −3% / 10% produziu 49 acertos em 49 ocorrências no estudo salvo em "
             "docs; a amostra é pequena e não oferece garantia futura."
         )
+    use_win_rate_filter = st.checkbox(
+        "Exigir taxa de acerto histórica do ativo",
+        value=False,
+        key="pa_use_historical_win_rate_filter",
+        help=("Usa somente operações do backtest individual encerradas antes do sinal atual. "
+              "Não utiliza o resultado da operação atual nem dados futuros."),
+    )
+    w1, w2 = st.columns(2)
+    win_rate_threshold = w1.number_input(
+        "Taxa de acerto histórica mínima (%)",
+        min_value=0.0,
+        max_value=100.0,
+        value=75.0,
+        step=1.0,
+        key="pa_historical_win_rate_threshold",
+        disabled=not use_win_rate_filter,
+    )
+    win_rate_min_trades = w2.number_input(
+        "Mínimo de operações anteriores",
+        min_value=1,
+        max_value=10_000,
+        value=5,
+        step=1,
+        key="pa_historical_win_rate_min_trades",
+        disabled=not use_win_rate_filter,
+    )
+    if use_win_rate_filter:
+        st.caption(
+            f"A entrada exige taxa de acerto estritamente maior que "
+            f"{win_rate_threshold:g}% em pelo menos {int(win_rate_min_trades)} "
+            "operações anteriores concluídas do mesmo ativo."
+        )
     return EntrySelectionConfig(
         max_entries_per_date=int(max_entries),
         entry_ranking=labels[ranking_label],
@@ -529,6 +561,9 @@ def _per_asset_selection_tab() -> EntrySelectionConfig:
         quality_trend_period=int(quality_period),
         quality_min_trend_pct=float(quality_min_trend),
         quality_max_range_rank_pct=float(quality_range_rank),
+        use_historical_win_rate_filter=bool(use_win_rate_filter),
+        historical_win_rate_threshold_pct=float(win_rate_threshold),
+        historical_win_rate_min_trades=int(win_rate_min_trades),
     )
 
 
@@ -553,9 +588,11 @@ def configuration_form(mode: str, *, with_run: bool):
     with st.form(f"config_form_{mode}"):
         st.subheader("⚙️ Parâmetros da estratégia")
         if mode == "screening":
-            (tab_e,) = st.tabs(["📥 Entrada"])
+            tab_e, tab_x = st.tabs(["📥 Entrada", "🚪 Saídas"])
             with tab_e:
                 e = _entry_tab()
+            with tab_x:
+                ex = _exits_tab()
         else:
             if mode == "portfolio":
                 sizing_tab_label = "💰 Carteira e seleção"

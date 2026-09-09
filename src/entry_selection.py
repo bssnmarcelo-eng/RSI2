@@ -32,6 +32,10 @@ def select_trades_per_entry_date(
         raise ValueError("quality_trend_period must be at least 2")
     if not 0.0 < selection.quality_max_range_rank_pct <= 100.0:
         raise ValueError("quality_max_range_rank_pct must be between 0 and 100")
+    if not 0.0 <= selection.historical_win_rate_threshold_pct <= 100.0:
+        raise ValueError("historical_win_rate_threshold_pct must be between 0 and 100")
+    if selection.historical_win_rate_min_trades < 1:
+        raise ValueError("historical_win_rate_min_trades must be at least 1")
 
     work = trades.copy()
     metric_by_ticker: dict[str, pd.DataFrame] = {}
@@ -87,10 +91,51 @@ def select_trades_per_entry_date(
     work["_quality_trend"] = quality_trend
     work["_entry_date"] = pd.to_datetime(work["entry_date"])
 
+    if selection.use_historical_win_rate_filter:
+        required = {"exit_date", "net_return"}
+        missing = required.difference(work.columns)
+        if missing:
+            raise ValueError(
+                "historical win-rate filter requires columns: " + ", ".join(sorted(missing))
+            )
+        work["selection_row_id"] = np.arange(len(work))
+        history_by_ticker = {}
+        for ticker, group in work.groupby("ticker"):
+            history_by_ticker[str(ticker)] = pd.DataFrame({
+                "row_id": group["selection_row_id"].to_numpy(),
+                "exit_date": pd.to_datetime(group["exit_date"]).to_numpy(),
+                "net_return": pd.to_numeric(group["net_return"], errors="coerce").to_numpy(),
+            })
+        historical_win_rates = []
+        historical_trade_counts = []
+        for row in work.itertuples(index=False):
+            history = history_by_ticker[str(row.ticker)]
+            completed = history.loc[
+                (history["exit_date"] <= pd.Timestamp(row.signal_date))
+                & (history["row_id"] != row.selection_row_id)
+            ]["net_return"].dropna()
+            historical_trade_counts.append(len(completed))
+            historical_win_rates.append(
+                float(completed.gt(0).mean()) if not completed.empty else np.nan
+            )
+        work["_historical_trade_count"] = historical_trade_counts
+        work["_historical_win_rate"] = historical_win_rates
+        historical_win_rate_mask = (
+            work["_historical_trade_count"].ge(selection.historical_win_rate_min_trades)
+            & work["_historical_win_rate"].gt(
+                selection.historical_win_rate_threshold_pct / 100.0
+            )
+        )
+
     if selection.minimum_candidates_per_date > 0:
         candidate_count = work.groupby("_entry_date")["ticker"].transform("size")
         work = work.loc[
             candidate_count >= selection.minimum_candidates_per_date
+        ].copy()
+
+    if selection.use_historical_win_rate_filter:
+        work = work.loc[
+            historical_win_rate_mask.reindex(work.index, fill_value=False)
         ].copy()
 
     if selection.use_trade_quality_filter:

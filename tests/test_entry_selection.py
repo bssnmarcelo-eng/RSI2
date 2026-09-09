@@ -170,3 +170,38 @@ def test_minimum_candidates_rejects_sparse_entry_dates():
 
     assert rejected.empty
     assert admitted["ticker"].tolist() == ["T01", "T02", "T03"]
+
+
+def test_historical_win_rate_filter_is_causal_and_strictly_above_threshold():
+    dates = pd.date_range("2024-01-05", periods=12, freq="W-FRI")
+    rows = []
+    results = {}
+    returns = {
+        "AAA": [0.10, 0.10, 0.10, -0.05, 0.10],  # 3/4 = 75% before final signal
+        "BBB": [0.10, 0.10, 0.10, 0.10, -0.05],  # 4/4 = 100% before final signal
+    }
+    for ticker, ticker_returns in returns.items():
+        results[ticker] = _result(dates, [100.0] * len(dates), [100.0] * len(dates))
+        for number, net_return in enumerate(ticker_returns):
+            rows.append({
+                "ticker": ticker,
+                "signal_date": dates[number * 2],
+                "entry_date": dates[number * 2 + 1],
+                "exit_date": dates[number * 2 + 1],
+                "signal_close": 100.0,
+                "signal_range": 1.0,
+                "rsi_at_signal": 5.0,
+                "signal_atr_mult": 1.0,
+                "net_return": net_return,
+            })
+    selection = EntrySelectionConfig(
+        max_entries_per_date=10,
+        use_historical_win_rate_filter=True,
+        historical_win_rate_threshold_pct=75.0,
+        historical_win_rate_min_trades=4,
+    )
+
+    selected = select_trades_per_entry_date(pd.DataFrame(rows), results, selection)
+
+    assert selected["ticker"].tolist() == ["BBB"]
+    assert selected.iloc[0]["net_return"] == -0.05

@@ -17,6 +17,8 @@ def price_chart(
     ticker: str = "",
     rsi_entry: float = 10.0,
     rsi_exit: float = 70.0,
+    rsi_period: int = 2,
+    default_lookback_years: int | None = None,
 ) -> go.Figure:
     """Candlestick price chart with Volume, SMA(200) and RSI(2) sub-panels.
 
@@ -135,7 +137,7 @@ def price_chart(
         fig.add_trace(
             go.Scatter(
                 x=data.index, y=data["rsi"].values,
-                name="RSI(2)",
+                name=f"RSI({rsi_period})",
                 line=dict(color="#5c6bc0", width=1.5),
             ),
             row=rsi_row, col=1,
@@ -178,6 +180,20 @@ def price_chart(
 
     full_y = _fit_y(data)
     full_x = [first_dt.strftime("%Y-%m-%d"), last_dt.strftime("%Y-%m-%d")]
+    initial_y = full_y
+    initial_x = full_x
+    if default_lookback_years is not None:
+        initial_start = max(
+            first_dt,
+            last_dt - pd.DateOffset(years=default_lookback_years),
+        )
+        initial_window = data[data.index >= initial_start]
+        if not initial_window.empty:
+            initial_y = _fit_y(initial_window)
+            initial_x = [
+                initial_start.strftime("%Y-%m-%d"),
+                last_dt.strftime("%Y-%m-%d"),
+            ]
 
     def _btn(label: str, start) -> dict:
         start_ts = pd.Timestamp(start)
@@ -210,16 +226,14 @@ def price_chart(
         legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="right", x=1),
         # Log price pane, opened on the full fitted range (no autorange padding).
         yaxis=dict(type="log", autorange=False, fixedrange=False,
-                   title_text="Preço", range=full_y),
+                   title_text="Preço", range=initial_y),
         updatemenus=[dict(
             type="buttons", direction="left", buttons=range_buttons,
             x=0.0, xanchor="left", y=1.02, yanchor="bottom",
             font=dict(size=12), pad=dict(r=6, t=2, b=2),
-            # active=None: Plotly does NOT auto-apply any button on load, so the
-            # chart opens on the explicit full range set below (no "opens zoomed
-            # to 5A"), and no button shows a misleading highlight. Clicking a
-            # button still applies its X+Y window.
-            active=None,
+            # Highlight 1A only when that window is explicitly requested;
+            # otherwise no button implies a range that was not applied.
+            active=2 if default_lookback_years == 1 else None,
         )],
     )
     fig.update_xaxes(rangeslider_visible=False, type="date")
@@ -228,8 +242,7 @@ def price_chart(
         fig.update_xaxes(matches="x", row=r, col=1)
     for r in range(1, n_rows):
         fig.update_xaxes(showticklabels=False, row=r, col=1)
-    # Explicit initial window = full history (so it opens framed, not padded).
-    fig.update_xaxes(range=full_x, autorange=False, row=1, col=1)
+    fig.update_xaxes(range=initial_x, autorange=False, row=1, col=1)
     return fig
 
 

@@ -11,12 +11,13 @@ allows the caller to choose the adjustment convention.
 from __future__ import annotations
 
 import datetime
+from dataclasses import replace
 from typing import Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 
 from . import norgate_loader
-from .backtest_engine import build_signal_frame
+from .backtest_engine import BacktestEngine, BacktestResult, build_signal_frame
 from .types import StrategyConfig
 
 # UI index label -> current-constituent Norgate watchlist.
@@ -94,6 +95,10 @@ def evaluate(df: pd.DataFrame, cfg: StrategyConfig, ignore_last: bool) -> Option
         "rsi": float(row["rsi"]) if pd.notna(row["rsi"]) else float("nan"),
         "body_percentile": body_pct,
         "range": rng,
+        "atr_multiple": (
+            float(row["atr_mult"]) if pd.notna(row["atr_mult"]) else float("nan")
+        ),
+        "atr_period": int(cfg.patterns.hammer.atr_period),
         "pattern": str(row["pattern"]),
         "signal": bool(row["entry_signal"]),
     }
@@ -120,7 +125,8 @@ def _screen_data(ohlc: Dict[str, pd.DataFrame], tickers: List[str],
         if ev["signal"]:
             hits.append({"ticker": t, "date": ev["date"], "close": ev["close"],
                          "rsi": ev["rsi"], "body_percentile": ev["body_percentile"],
-                         "range": ev["range"], "pattern": ev["pattern"]})
+                         "range": ev["range"], "atr_multiple": ev["atr_multiple"],
+                         "atr_period": ev["atr_period"], "pattern": ev["pattern"]})
     hits_df = pd.DataFrame(hits)
     if not hits_df.empty:
         hits_df = hits_df.sort_values("rsi").reset_index(drop=True)
@@ -158,6 +164,87 @@ _NORGATE_LOOKBACK_DAYS: Dict[str, int] = {
     "Weekly":  365 * 4,
     "Monthly": 365 * 14,
 }
+
+
+def fetch_screen_chart(
+    ticker: str,
+    timeframe: str,
+    cfg: StrategyConfig,
+    adjustment_label: str = "Total Return (splits + dividendos)",
+) -> Tuple[pd.DataFrame, List[str]]:
+    """Load all available history for one screening ticker and calculate signals."""
+    freq_label = NORGATE_TIMEFRAMES[timeframe]
+    end = datetime.date.today()
+    frame, warnings = norgate_loader.fetch_price(
+        ticker,
+        adjustment_label=adjustment_label,
+        start_date="1900-01-01",
+        end_date=str(end),
+        frequency_label=freq_label,
+    )
+    if frame.empty:
+        return frame, warnings
+    return build_signal_frame(frame, cfg), warnings
+
+
+def add_historical_trade_stats(
+    hits: pd.DataFrame,
+    timeframe: str,
+    cfg: StrategyConfig,
+    adjustment_label: str = "Total Return (splits + dividendos)",
+    progress: Optional[Callable[[float], None]] = None,
+) -> Tuple[pd.DataFrame, Dict[str, Tuple[BacktestResult, List[str]]], List[str]]:
+    """Attach full-history win/loss statistics to each screening hit."""
+    enriched = hits.copy()
+    enriched["trade_count"] = pd.NA
+    for column in ("win_rate", "avg_gain", "avg_loss", "mfe_12w"):
+        enriched[column] = float("nan")
+    details: Dict[str, Tuple[BacktestResult, List[str]]] = {}
+    errors: List[str] = []
+    total = len(enriched)
+
+    for number, (index, row) in enumerate(enriched.iterrows(), start=1):
+        ticker = str(row["ticker"])
+        try:
+            frame, warnings = fetch_screen_chart(
+                ticker,
+                timeframe,
+                cfg,
+                adjustment_label=adjustment_label,
+            )
+            if frame.empty:
+                errors.append(f"{ticker}: histórico vazio")
+                continue
+            result = BacktestEngine(frame, replace(cfg, ticker=ticker)).run()
+            details[ticker] = (result, warnings)
+            enriched.at[index, "trade_count"] = len(result.trades)
+            mfe_12w = (
+                pd.to_numeric(result.trades["mfe_12w"], errors="coerce").dropna()
+                if "mfe_12w" in result.trades
+                else pd.Series(dtype=float)
+            )
+            if not mfe_12w.empty:
+                enriched.at[index, "mfe_12w"] = float(mfe_12w.mean())
+            returns = (
+                pd.to_numeric(result.trades["net_return"], errors="coerce").dropna()
+                if "net_return" in result.trades
+                else pd.Series(dtype=float)
+            )
+            if not returns.empty:
+                gains = returns.loc[returns > 0]
+                losses = returns.loc[returns < 0]
+                enriched.at[index, "win_rate"] = float(returns.gt(0).mean())
+                if not gains.empty:
+                    enriched.at[index, "avg_gain"] = float(gains.mean())
+                if not losses.empty:
+                    enriched.at[index, "avg_loss"] = float(losses.mean())
+        except Exception as exc:
+            errors.append(f"{ticker}: {exc}")
+        finally:
+            if progress is not None and total:
+                progress(number / total)
+
+    return enriched, details, errors
 
 
 def run_screen_norgate(tickers: List[str], timeframe: str, cfg: StrategyConfig,

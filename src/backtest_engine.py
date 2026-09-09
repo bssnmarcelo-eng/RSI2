@@ -520,7 +520,7 @@ def add_period_mfe(
     trades_df: pd.DataFrame,
     data,
 ) -> pd.DataFrame:
-    """Add mfe_1w … mfe_5w columns to *trades_df*.
+    """Add MFE columns for 1–5 and 12 weeks to *trades_df*.
 
     Each column is the maximum unrealised gain (vs entry_price) achievable in
     the first N calendar weeks after entry, independent of actual exit date.
@@ -530,7 +530,8 @@ def add_period_mfe(
     A "week" is 7 calendar days; for weekly-bar data that equals ~1 bar.
     """
     result = trades_df.copy()
-    period_cols = [f"mfe_{n}w" for n in range(1, 6)]
+    period_weeks = (*range(1, 6), 12)
+    period_cols = [f"mfe_{n}w" for n in period_weeks]
 
     if result.empty:
         for col in period_cols:
@@ -545,7 +546,7 @@ def add_period_mfe(
             return df["high"].sort_index() if df is not None and "high" in df.columns else pd.Series(dtype=float)
         return data["high"].sort_index() if "high" in data.columns else pd.Series(dtype=float)
 
-    for n_weeks in range(1, 6):
+    for n_weeks in period_weeks:
         col = f"mfe_{n_weeks}w"
         offset = pd.DateOffset(weeks=n_weeks)
         values: list = []

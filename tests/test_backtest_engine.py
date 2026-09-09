@@ -7,7 +7,7 @@ from dataclasses import replace
 import pandas as pd
 import pytest
 
-from src.backtest_engine import BacktestEngine, _OpenPosition
+from src.backtest_engine import BacktestEngine, _OpenPosition, add_period_mfe
 from src.types import (
     CommissionModel,
     CostConfig,
@@ -22,6 +22,17 @@ from tests._helpers import ONE_HAMMER_ROWS, make_config, make_ohlc
 # --------------------------------------------------------------------------- #
 # No look-ahead
 # --------------------------------------------------------------------------- #
+def test_period_mfe_includes_twelve_week_horizon():
+    dates = pd.date_range("2026-01-02", periods=14, freq="7D")
+    data = pd.DataFrame({"high": [100.0] * 6 + [110.0] * 6 + [125.0, 130.0]}, index=dates)
+    trades = pd.DataFrame({"entry_date": [dates[0]], "entry_price": [100.0]})
+
+    result = add_period_mfe(trades, data)
+
+    assert result.loc[0, "mfe_5w"] == pytest.approx(0.0)
+    assert result.loc[0, "mfe_12w"] == pytest.approx(0.25)
+
+
 def test_next_open_entry_fills_on_the_bar_after_the_signal():
     df = make_ohlc(ONE_HAMMER_ROWS)
     cfg = make_config()  # all exits off -> single trade force-closed at the end

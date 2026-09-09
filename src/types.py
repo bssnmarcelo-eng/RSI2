@@ -67,6 +67,9 @@ class EntrySelectionConfig:
     quality_trend_period: int = 10
     quality_min_trend_pct: float = -3.0
     quality_max_range_rank_pct: float = 10.0
+    use_historical_win_rate_filter: bool = False
+    historical_win_rate_threshold_pct: float = 75.0
+    historical_win_rate_min_trades: int = 5
 
 
 class InstrumentType(str, Enum):
