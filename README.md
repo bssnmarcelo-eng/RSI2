@@ -49,8 +49,10 @@ A long **setup** is confirmed at a candle's **close** when **both** conditions h
   monthly). Symbols come from any local Norgate watchlist or database (which
   include delisted and historical constituents); OHLC is fetched from Norgate, and
   the strategy's own signal logic (RSI(2) + percentile hammer + ATR/price filters)
-  is run on each ticker, so the screen matches the backtest exactly. Hits are
-  listed (most oversold first) with a CSV download. Requires the `norgatedata`
+  is run on each ticker, so the screen matches the backtest exactly. Optional
+  MM200 filters retain only prices above/below the average and/or averages rising/
+  falling versus the previous bar, always on the selected timeframe. Hits are
+  listed (most oversold first) with MM200, distance and slope plus a CSV download. Requires the `norgatedata`
   package and the Norgate Data Updater (NDU) running locally.
 - **Portfolio (shared capital)** — run the same strategy across many tickers
   sharing **one capital pool** (a real portfolio, not independent backtests).

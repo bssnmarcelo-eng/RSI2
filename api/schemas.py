@@ -223,6 +223,8 @@ class NorgateScreeningRequest(BaseModel):
     rsi_max: float = Field(default=20, ge=0, le=100)
     min_price: float = Field(default=0, ge=0)
     min_average_turnover: float = Field(default=0, ge=0)
+    sma_price_filter: Literal["any", "above", "below"] = "any"
+    sma_slope_filter: Literal["any", "rising", "falling"] = "any"
 
     @model_validator(mode="after")
     def validate_norgate_screening(self) -> "NorgateScreeningRequest":

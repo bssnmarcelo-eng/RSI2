@@ -68,6 +68,47 @@ def test_evaluate_exposes_atr_multiple_and_configured_period():
     assert result["atr_period"] == 7
 
 
+def test_evaluate_filters_price_position_and_sma_200_slope():
+    dates = pd.bdate_range("2023-01-02", periods=205)
+    close = pd.Series(range(100, 305), index=dates, dtype=float)
+    frame = pd.DataFrame({
+        "open": close - 0.5,
+        "high": close + 1.0,
+        "low": close - 1.0,
+        "close": close,
+        "volume": 1_000.0,
+    })
+
+    accepted = screener.evaluate(
+        frame,
+        StrategyConfig(),
+        ignore_last=False,
+        sma_price_filter="above",
+        sma_slope_filter="rising",
+    )
+    rejected = screener.evaluate(
+        frame,
+        StrategyConfig(),
+        ignore_last=False,
+        sma_price_filter="below",
+        sma_slope_filter="falling",
+    )
+
+    assert accepted is not None
+    assert accepted["price_vs_sma_200"] == "above"
+    assert accepted["distance_sma_200"] > 0
+    assert accepted["sma_200_slope"] > 0
+    assert accepted["sma_filter_match"] is True
+    assert rejected is not None
+    assert rejected["sma_filter_match"] is False
+
+
+def test_evaluate_rejects_unknown_sma_filter():
+    frame = pd.DataFrame()
+    with pytest.raises(ValueError, match="posição da MM200"):
+        screener.evaluate(frame, StrategyConfig(), False, sma_price_filter="sideways")
+
+
 def test_fetch_screen_chart_uses_selected_timeframe_and_builds_rsi(monkeypatch):
     raw = pd.DataFrame(
         {"open": [1.0], "high": [2.0], "low": [0.5], "close": [1.5]},

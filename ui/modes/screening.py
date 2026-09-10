@@ -326,6 +326,19 @@ def run_screening_mode() -> None:
     adjustment = c2.selectbox("Ajuste de preço", norgate_loader.ADJ_LABELS, index=0)
     max_tickers = c3.number_input("Max tickers (0 = all)", min_value=0, max_value=10000,
                                   value=0, step=50)
+    ma1, ma2 = st.columns(2)
+    sma_price_label = ma1.selectbox(
+        "Preço em relação à MM200",
+        list(screener.SMA_PRICE_FILTERS),
+        help="Compara o fechamento da barra avaliada com a média móvel simples de 200 barras do mesmo timeframe.",
+    )
+    sma_slope_label = ma2.selectbox(
+        "Inclinação da MM200",
+        list(screener.SMA_SLOPE_FILTERS),
+        help="Ascendente quando a MM200 atual é maior que a MM200 da barra anterior; descendente quando é menor.",
+    )
+    sma_price_filter = screener.SMA_PRICE_FILTERS[sma_price_label]
+    sma_slope_filter = screener.SMA_SLOPE_FILTERS[sma_slope_label]
     ignore_last = st.checkbox(
         "Ignorar a última barra (avaliar a penúltima)",
         value=False,
@@ -338,11 +351,14 @@ def run_screening_mode() -> None:
                + (f" · range > {cfg.patterns.hammer.atr_multiple:g}×ATR({cfg.patterns.hammer.atr_period})"
                   if cfg.patterns.hammer.use_atr_filter else "")
                + ((f" · price ≥ {cfg.min_price:g}" if cfg.min_price > 0 else "")
-                  + (f" · price ≤ {cfg.max_price:g}" if cfg.max_price > 0 else "")))
+                  + (f" · price ≤ {cfg.max_price:g}" if cfg.max_price > 0 else ""))
+               + (f" · {sma_price_label}" if sma_price_filter != "any" else "")
+               + (f" · {sma_slope_label}" if sma_slope_filter != "any" else ""))
 
     tickers = symbols if max_tickers == 0 else symbols[:int(max_tickers)]
     context = (
         tuple(tickers), timeframe, adjustment, bool(ignore_last), repr(cfg),
+        sma_price_filter, sma_slope_filter,
     )
     if st.button("Executar screening", type="primary"):
         st.caption(f"Scanning **{len(tickers)}** tickers on **{timeframe}**…")
@@ -350,6 +366,7 @@ def run_screening_mode() -> None:
         try:
             hits, scanned, errors = screener.run_screen_norgate(
                 tickers, timeframe, cfg, adjustment_label=adjustment, ignore_last=ignore_last,
+                sma_price_filter=sma_price_filter, sma_slope_filter=sma_slope_filter,
                 progress=lambda p: bar.progress(
                     min(p, 1.0), text="Baixando dados do Norgate & screening…"
                 ),
@@ -416,6 +433,20 @@ def run_screening_mode() -> None:
     disp["range"] = hits["range"].map(lambda v: fmt_num(v, 2))
     disp["atr_multiple"] = hits["atr_multiple"].map(lambda v: fmt_num(v, 3))
     disp["atr_period"] = hits["atr_period"].astype(int)
+    disp["sma_200"] = hits["sma_200"].map(
+        lambda value: fmt_money(value) if pd.notna(value) else "—"
+    )
+    disp["distance_sma_200"] = hits["distance_sma_200"].map(
+        lambda value: fmt_pct(value) if pd.notna(value) else "—"
+    )
+    disp["sma_200_slope"] = hits["sma_200_slope"].map(
+        lambda value: fmt_pct(value) if pd.notna(value) else "—"
+    )
+    disp["price_vs_sma_200"] = hits["price_vs_sma_200"].map({
+        "above": "Acima",
+        "below": "Abaixo",
+        "equal_or_unavailable": "Igual/indisponível",
+    })
     disp["trade_count"] = hits["trade_count"].map(
         lambda value: int(value) if pd.notna(value) else "—"
     )
@@ -439,6 +470,10 @@ def run_screening_mode() -> None:
         "avg_gain": "Ganho médio",
         "avg_loss": "Perda média",
         "mfe_12w": "MFE médio 60d / 12sem",
+        "sma_200": "MM200",
+        "distance_sma_200": "Distância da MM200",
+        "sma_200_slope": "Inclinação da MM200",
+        "price_vs_sma_200": "Posição vs. MM200",
     })
     st.caption("Clique em uma linha para abrir o gráfico semanal do ativo, inicialmente em 1 ano.")
     event = st.dataframe(

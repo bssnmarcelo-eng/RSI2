@@ -127,7 +127,7 @@ export type ScreeningResponse = {
   assets_loaded: number;
   skipped: string[];
   warnings: string[];
-  results: Array<{ ticker: string; date: string; close: number; rsi: number; entry_signal: boolean; pattern: string; average_turnover: number; distance_sma_200: number | null }>;
+  results: Array<{ ticker: string; date: string; close: number; rsi: number; entry_signal: boolean; pattern: string; average_turnover: number; sma_200: number | null; distance_sma_200: number | null; sma_200_slope: number | null; price_vs_sma_200: "above" | "below" | null }>;
 };
 
 export type OptimizationResponse = {
@@ -190,7 +190,7 @@ export function getFundamentals(ticker: string): Promise<FundamentalResponse> {
 }
 
 export function runNorgateScreening(payload: {
-  collection_type: "watchlist" | "database"; collection_name: string; symbols: string[]; use_entire_collection: boolean; start_date: string; end_date: string; frequency: string; adjustment: string; rsi_period: number; rsi_max: number; min_price: number; min_average_turnover: number;
+  collection_type: "watchlist" | "database"; collection_name: string; symbols: string[]; use_entire_collection: boolean; start_date: string; end_date: string; frequency: string; adjustment: string; rsi_period: number; rsi_max: number; min_price: number; min_average_turnover: number; sma_price_filter: "any" | "above" | "below"; sma_slope_filter: "any" | "rising" | "falling";
 }): Promise<ScreeningResponse> {
   return apiRequest("/v1/screenings/norgate", { method: "POST", body: JSON.stringify(payload) });
 }

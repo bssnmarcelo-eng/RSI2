@@ -76,13 +76,43 @@ def _min_bars(cfg: StrategyConfig) -> int:
     return max(need, 5)
 
 
-def evaluate(df: pd.DataFrame, cfg: StrategyConfig, ignore_last: bool) -> Optional[dict]:
+def evaluate(
+    df: pd.DataFrame,
+    cfg: StrategyConfig,
+    ignore_last: bool,
+    sma_price_filter: str = "any",
+    sma_slope_filter: str = "any",
+) -> Optional[dict]:
     """Run the entry logic and return the evaluated candle's state (or None)."""
+    if sma_price_filter not in {"any", "above", "below"}:
+        raise ValueError(f"Filtro de posição da MM200 inválido: {sma_price_filter}")
+    if sma_slope_filter not in {"any", "rising", "falling"}:
+        raise ValueError(f"Filtro de inclinação da MM200 inválido: {sma_slope_filter}")
     if len(df) < _min_bars(cfg):
         return None
     sf = build_signal_frame(df, cfg)
     pos = -2 if (ignore_last and len(sf) >= 2) else -1
     row = sf.iloc[pos]
+    sma = pd.to_numeric(sf["close"], errors="coerce").rolling(200, min_periods=200).mean()
+    sma_200 = float(sma.iloc[pos]) if pd.notna(sma.iloc[pos]) else float("nan")
+    previous_sma = float(sma.iloc[pos - 1]) if len(sma) >= abs(pos - 1) and pd.notna(sma.iloc[pos - 1]) else float("nan")
+    close = float(row["close"])
+    distance_sma_200 = close / sma_200 - 1 if pd.notna(sma_200) and sma_200 else float("nan")
+    sma_200_slope = sma_200 / previous_sma - 1 if pd.notna(sma_200) and pd.notna(previous_sma) and previous_sma else float("nan")
+    price_filter_match = (
+        sma_price_filter == "any"
+        or (
+            pd.notna(sma_200)
+            and ((sma_price_filter == "above" and close > sma_200) or (sma_price_filter == "below" and close < sma_200))
+        )
+    )
+    slope_filter_match = (
+        sma_slope_filter == "any"
+        or (
+            pd.notna(sma_200_slope)
+            and ((sma_slope_filter == "rising" and sma_200_slope > 0) or (sma_slope_filter == "falling" and sma_200_slope < 0))
+        )
+    )
     rng = float(row["high"] - row["low"])
     # Effective body percentile: how far the body's lowest point sits from the high,
     # as a fraction of the range. Equals the smallest `percentile` at which this
@@ -91,7 +121,7 @@ def evaluate(df: pd.DataFrame, cfg: StrategyConfig, ignore_last: bool) -> Option
     body_pct = (float(row["high"]) - body_low) / rng if rng > 0 else float("nan")
     return {
         "date": sf.index[pos],
-        "close": float(row["close"]),
+        "close": close,
         "rsi": float(row["rsi"]) if pd.notna(row["rsi"]) else float("nan"),
         "body_percentile": body_pct,
         "range": rng,
@@ -101,11 +131,18 @@ def evaluate(df: pd.DataFrame, cfg: StrategyConfig, ignore_last: bool) -> Option
         "atr_period": int(cfg.patterns.hammer.atr_period),
         "pattern": str(row["pattern"]),
         "signal": bool(row["entry_signal"]),
+        "sma_200": sma_200,
+        "distance_sma_200": distance_sma_200,
+        "sma_200_slope": sma_200_slope,
+        "price_vs_sma_200": "above" if pd.notna(sma_200) and close > sma_200 else "below" if pd.notna(sma_200) and close < sma_200 else "equal_or_unavailable",
+        "sma_filter_match": bool(price_filter_match and slope_filter_match),
     }
 
 
 def _screen_data(ohlc: Dict[str, pd.DataFrame], tickers: List[str],
-                 cfg: StrategyConfig, ignore_last: bool) -> Tuple[pd.DataFrame, int]:
+                 cfg: StrategyConfig, ignore_last: bool,
+                 sma_price_filter: str = "any",
+                 sma_slope_filter: str = "any") -> Tuple[pd.DataFrame, int]:
     """Run :func:`evaluate` on each ticker's OHLC and collect the hits.
 
     Returns ``(hits_df, n_scanned)`` where *n_scanned* counts tickers that had
@@ -118,15 +155,19 @@ def _screen_data(ohlc: Dict[str, pd.DataFrame], tickers: List[str],
         df = ohlc.get(t)
         if df is None:
             continue
-        ev = evaluate(df, cfg, ignore_last)
+        ev = evaluate(df, cfg, ignore_last, sma_price_filter, sma_slope_filter)
         if ev is None:
             continue
         scanned += 1
-        if ev["signal"]:
+        if ev["signal"] and ev["sma_filter_match"]:
             hits.append({"ticker": t, "date": ev["date"], "close": ev["close"],
                          "rsi": ev["rsi"], "body_percentile": ev["body_percentile"],
                          "range": ev["range"], "atr_multiple": ev["atr_multiple"],
-                         "atr_period": ev["atr_period"], "pattern": ev["pattern"]})
+                         "atr_period": ev["atr_period"], "pattern": ev["pattern"],
+                         "sma_200": ev["sma_200"],
+                         "distance_sma_200": ev["distance_sma_200"],
+                         "sma_200_slope": ev["sma_200_slope"],
+                         "price_vs_sma_200": ev["price_vs_sma_200"]})
     hits_df = pd.DataFrame(hits)
     if not hits_df.empty:
         hits_df = hits_df.sort_values("rsi").reset_index(drop=True)
@@ -135,7 +176,9 @@ def _screen_data(ohlc: Dict[str, pd.DataFrame], tickers: List[str],
 
 def run_screen(tickers: List[str], timeframe: str, cfg: StrategyConfig,
                ignore_last: bool = True,
-               progress: Optional[Callable[[float], None]] = None) -> Tuple[pd.DataFrame, int, int]:
+               progress: Optional[Callable[[float], None]] = None,
+               sma_price_filter: str = "any",
+               sma_slope_filter: str = "any") -> Tuple[pd.DataFrame, int, int]:
     """Screen ``tickers`` on ``timeframe`` via Norgate. Returns hits/scanned/errors.
 
     ``hits_df`` rows are tickers whose entry_signal is True on the evaluated candle,
@@ -145,14 +188,16 @@ def run_screen(tickers: List[str], timeframe: str, cfg: StrategyConfig,
     ohlc = fetch_ohlc(
         tickers, frequency_label, lookback_years, _min_bars(cfg), progress=progress
     )
-    hits_df, scanned = _screen_data(ohlc, tickers, cfg, ignore_last)
+    hits_df, scanned = _screen_data(
+        ohlc, tickers, cfg, ignore_last, sma_price_filter, sma_slope_filter
+    )
     return hits_df, scanned, len(tickers) - scanned
 
 
 # ── Norgate path ──────────────────────────────────────────────────────────────
 
 # Screening timeframe -> (norgate frequency label, warmup lookback in days). The
-# lookback is generous enough to leave >100 bars for RSI/ATR warmup at each freq.
+# lookback is generous enough to calculate MM200 and its one-bar slope.
 NORGATE_TIMEFRAMES: Dict[str, str] = {
     "Daily":   "Diário",
     "Weekly":  "Semanal",
@@ -162,7 +207,19 @@ NORGATE_TIMEFRAMES: Dict[str, str] = {
 _NORGATE_LOOKBACK_DAYS: Dict[str, int] = {
     "Daily":   400,
     "Weekly":  365 * 4,
-    "Monthly": 365 * 14,
+    "Monthly": 365 * 20,
+}
+
+SMA_PRICE_FILTERS: Dict[str, str] = {
+    "Qualquer posição": "any",
+    "Preço acima da MM200": "above",
+    "Preço abaixo da MM200": "below",
+}
+
+SMA_SLOPE_FILTERS: Dict[str, str] = {
+    "Qualquer inclinação": "any",
+    "MM200 ascendente": "rising",
+    "MM200 descendente": "falling",
 }
 
 
@@ -251,6 +308,8 @@ def run_screen_norgate(tickers: List[str], timeframe: str, cfg: StrategyConfig,
                        adjustment_label: str = "Total Return (splits + dividendos)",
                        ignore_last: bool = True,
                        progress: Optional[Callable[[float], None]] = None,
+                       sma_price_filter: str = "any",
+                       sma_slope_filter: str = "any",
                        ) -> Tuple[pd.DataFrame, int, int]:
     """Screen ``tickers`` on ``timeframe`` using Norgate Data.
 
@@ -272,5 +331,7 @@ def run_screen_norgate(tickers: List[str], timeframe: str, cfg: StrategyConfig,
         frequency_label=freq_label,
         progress=progress,
     )
-    hits_df, scanned = _screen_data(ohlc, tickers, cfg, ignore_last)
+    hits_df, scanned = _screen_data(
+        ohlc, tickers, cfg, ignore_last, sma_price_filter, sma_slope_filter
+    )
     return hits_df, scanned, len(tickers) - scanned

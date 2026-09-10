@@ -482,7 +482,7 @@ def norgate_screening(request: NorgateScreeningRequest) -> dict:
         adjustment_label=request.adjustment,
         start_date=request.start_date.isoformat(),
         end_date=request.end_date.isoformat(),
-        min_bars=20,
+        min_bars=201 if request.sma_price_filter != "any" or request.sma_slope_filter != "any" else 20,
         frequency_label=request.frequency,
     )
     cfg = StrategyConfig(rsi_period=request.rsi_period, rsi_entry_threshold=request.rsi_max)
@@ -499,8 +499,19 @@ def norgate_screening(request: NorgateScreeningRequest) -> dict:
         close = float(row["close"])
         rsi_value = float(row["rsi"]) if pd.notna(row["rsi"]) else None
         turnover = float((frame["close"] * frame["volume"]).tail(20).mean()) if "volume" in frame else 0.0
-        sma_200 = float(frame["close"].rolling(200).mean().iloc[-1]) if len(frame) >= 200 else None
+        sma_series = frame["close"].rolling(200, min_periods=200).mean()
+        sma_200 = float(sma_series.iloc[-1]) if pd.notna(sma_series.iloc[-1]) else None
+        previous_sma_200 = float(sma_series.iloc[-2]) if len(sma_series) >= 2 and pd.notna(sma_series.iloc[-2]) else None
+        sma_200_slope = sma_200 / previous_sma_200 - 1 if sma_200 is not None and previous_sma_200 else None
         if rsi_value is None or rsi_value > request.rsi_max or close < request.min_price or turnover < request.min_average_turnover:
+            continue
+        if request.sma_price_filter == "above" and (sma_200 is None or close <= sma_200):
+            continue
+        if request.sma_price_filter == "below" and (sma_200 is None or close >= sma_200):
+            continue
+        if request.sma_slope_filter == "rising" and (sma_200_slope is None or sma_200_slope <= 0):
+            continue
+        if request.sma_slope_filter == "falling" and (sma_200_slope is None or sma_200_slope >= 0):
             continue
         matches.append({
             "ticker": ticker,
@@ -511,6 +522,9 @@ def norgate_screening(request: NorgateScreeningRequest) -> dict:
             "pattern": str(row["pattern"] or ""),
             "average_turnover": turnover,
             "distance_sma_200": (close / sma_200 - 1) if sma_200 else None,
+            "sma_200": sma_200,
+            "sma_200_slope": sma_200_slope,
+            "price_vs_sma_200": "above" if sma_200 is not None and close > sma_200 else "below" if sma_200 is not None and close < sma_200 else None,
         })
         latest_date = max(latest_date, observed) if latest_date is not None else observed
     return {
