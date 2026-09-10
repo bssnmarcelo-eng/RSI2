@@ -1,0 +1,2 @@
+# Integração opcional com TWS/IB Gateway. As ordens são criadas com transmit=False.
+ibapi
