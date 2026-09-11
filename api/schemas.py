@@ -57,6 +57,8 @@ class StrategyInput(BaseModel):
     options: OptionSimulationInput = Field(default_factory=OptionSimulationInput)
     rsi_period: int = Field(default=2, ge=2, le=100)
     rsi_entry: float = Field(default=10, ge=0, le=100)
+    sma_200_price_filter: Literal["any", "above", "below"] = "any"
+    sma_200_slope_filter: Literal["any", "rising", "falling"] = "any"
     use_hammer: bool = True
     hammer_percentile: float = Field(default=0.33, gt=0, le=1)
     hammer_require_bullish_close: bool = False

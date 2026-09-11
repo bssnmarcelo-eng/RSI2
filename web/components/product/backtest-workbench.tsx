@@ -71,6 +71,10 @@ type BreadthSettings = {
   smaPeriod: number;
   thresholdPct: number;
 };
+type Sma200Filters = {
+  price: "any" | "above" | "below";
+  slope: "any" | "rising" | "falling";
+};
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return <div className="space-y-2"><Label>{label}</Label>{children}{hint ? <p className="text-xs leading-5 text-muted-foreground">{hint}</p> : null}</div>;
@@ -103,6 +107,7 @@ export function BacktestWorkbench() {
   const [indexName, setIndexName] = useState("");
   const [rsiPeriod, setRsiPeriod] = useState(2);
   const [rsiEntry, setRsiEntry] = useState(10);
+  const [sma200Filters, setSma200Filters] = useState<Sma200Filters>({ price: "any", slope: "any" });
   const [hammer, setHammer] = useState<HammerSettings>({
     use_hammer: true,
     hammer_percentile: 0.33,
@@ -265,6 +270,8 @@ export function BacktestWorkbench() {
         options,
         rsi_period: rsiPeriod,
         rsi_entry: rsiEntry,
+        sma_200_price_filter: sma200Filters.price,
+        sma_200_slope_filter: sma200Filters.slope,
         ...hammer,
         ...management,
         rsi_exit: rsiExit,
@@ -303,9 +310,9 @@ export function BacktestWorkbench() {
       <CardHeader className="border-b"><div className="grid grid-cols-4 gap-2" aria-label={`Etapa ${step + 1} de 4: ${steps[step]}`}>{steps.map((label, index) => <button type="button" key={label} onClick={() => setStep(index)} className="group min-h-14 text-left" aria-current={index === step ? "step" : undefined}><span className={`mb-2 block h-1 rounded-full ${index <= step ? "bg-primary" : "bg-muted"}`} /><span className={`hidden text-xs md:block ${index === step ? "font-medium" : "text-muted-foreground"}`}>{index < step ? <Check className="mr-1 inline size-3.5" /> : null}{index + 1}. {label}</span><span className="sr-only md:hidden">{label}</span></button>)}</div></CardHeader>
       <CardContent className="p-5 md:p-8">
         {step === 0 ? <UniverseStep status={status} catalog={catalog} loading={loadingData} collectionType={collectionType} collectionName={collectionName} collections={collections} availableCount={availableSymbols.length} symbolsText={symbolsText} useEntireCollection={useEntireCollection} startDate={startDate} endDate={endDate} frequency={frequency} adjustment={adjustment} restrictToIndex={restrictToIndex} indexName={indexName} onCollectionType={changeCollectionType} onCollectionName={setCollectionName} onSymbolsText={setSymbolsText} onEntireCollection={setUseEntireCollection} onStartDate={setStartDate} onEndDate={setEndDate} onFrequency={setFrequency} onAdjustment={setAdjustment} onRestrictToIndex={setRestrictToIndex} onIndexName={setIndexName} /> : null}
-        {step === 1 ? <StrategyStep mode={mode} rsiPeriod={rsiPeriod} rsiEntry={rsiEntry} rsiExit={rsiExit} maxBars={maxBars} hammer={hammer} breadth={breadth} management={management} onRsiPeriod={setRsiPeriod} onRsiEntry={setRsiEntry} onRsiExit={setRsiExit} onMaxBars={setMaxBars} onHammer={(changes) => setHammer((current) => ({ ...current, ...changes }))} onBreadth={changeBreadth} onManagement={(changes) => setManagement((current) => ({ ...current, ...changes }))} /> : null}
+        {step === 1 ? <StrategyStep mode={mode} rsiPeriod={rsiPeriod} rsiEntry={rsiEntry} rsiExit={rsiExit} maxBars={maxBars} hammer={hammer} breadth={breadth} sma200Filters={sma200Filters} management={management} onRsiPeriod={setRsiPeriod} onRsiEntry={setRsiEntry} onRsiExit={setRsiExit} onMaxBars={setMaxBars} onHammer={(changes) => setHammer((current) => ({ ...current, ...changes }))} onBreadth={changeBreadth} onSma200Filters={(changes) => setSma200Filters((current) => ({ ...current, ...changes }))} onManagement={(changes) => setManagement((current) => ({ ...current, ...changes }))} /> : null}
         {step === 2 ? <div className="space-y-8"><OptionsPanel instrument={instrument} options={options} onInstrument={changeInstrument} onOptions={(changes) => setOptions((current) => ({ ...current, ...changes }))} /><CostsStep initialCapital={initialCapital} maxPositions={maxPositions} pctPerTrade={pctPerTrade} commissionFixed={commissionFixed} commissionPct={commissionPct} slippagePct={slippagePct} mode={mode} onInitialCapital={setInitialCapital} onMaxPositions={setMaxPositions} onPctPerTrade={setPctPerTrade} onCommissionFixed={setCommissionFixed} onCommissionPct={setCommissionPct} onSlippagePct={setSlippagePct} /></div> : null}
-        {step === 3 ? <div className="space-y-6"><ReviewStep mode={mode} collectionName={collectionName} symbolCount={useEntireCollection ? availableSymbols.length : selectedSymbols.length} startDate={startDate} endDate={endDate} frequency={frequency} adjustment={adjustment} rsiPeriod={rsiPeriod} rsiEntry={rsiEntry} rsiExit={rsiExit} maxBars={maxBars} hammer={hammer} breadth={breadth} management={management} initialCapital={initialCapital} maxPositions={maxPositions} pctPerTrade={pctPerTrade} restrictToIndex={restrictToIndex} />{instrument === "synthetic_atm_call" ? <OptionReview options={options} /> : null}</div> : null}
+        {step === 3 ? <div className="space-y-6"><ReviewStep mode={mode} collectionName={collectionName} symbolCount={useEntireCollection ? availableSymbols.length : selectedSymbols.length} startDate={startDate} endDate={endDate} frequency={frequency} adjustment={adjustment} rsiPeriod={rsiPeriod} rsiEntry={rsiEntry} rsiExit={rsiExit} maxBars={maxBars} hammer={hammer} breadth={breadth} sma200Filters={sma200Filters} management={management} initialCapital={initialCapital} maxPositions={maxPositions} pctPerTrade={pctPerTrade} restrictToIndex={restrictToIndex} />{instrument === "synthetic_atm_call" ? <OptionReview options={options} /> : null}</div> : null}
         {error ? <div className="mt-6 flex gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive" role="alert"><CircleAlert className="size-5 shrink-0" /><div><strong>Não foi possível continuar</strong><p className="mt-1 text-foreground/75">{error}</p></div></div> : null}
         {running ? <div className="mt-8 rounded-xl border bg-muted/40 p-5" role="status"><div className="mb-3 flex justify-between gap-4 text-sm"><span>{runState?.status === "queued" ? "Na fila de execução…" : "Carregando dados e calculando o backtest…"}</span><span className="metric-number">{Math.round((runState?.progress ?? 0) * 100)}%</span></div><Progress value={(runState?.progress ?? 0) * 100} /><p className="mt-2 text-xs text-muted-foreground">{runState?.id ? `Execução ${runState.id} · dados processados localmente` : "Enviando configuração para a API local"}</p></div> : null}
         <div className="mt-8 flex flex-col-reverse gap-3 border-t pt-5 sm:flex-row sm:justify-between"><Button variant="outline" onClick={() => setStep(Math.max(0, step - 1))} disabled={step === 0 || running}><ChevronLeft className="size-4" />Voltar</Button>{step < 3 ? <Button onClick={() => setStep(step + 1)} disabled={running || (step === 0 && !status?.available)}>Continuar<ChevronRight className="size-4" /></Button> : <Button onClick={run} disabled={running || !status?.available}><Play className="size-4" />{running ? "Executando…" : "Executar com Norgate"}</Button>}</div>
@@ -340,8 +347,8 @@ function UniverseStep(props: UniverseProps) {
 }
 
 type StrategyStepProps = {
-  mode: BacktestMode; rsiPeriod: number; rsiEntry: number; rsiExit: number; maxBars: number; hammer: HammerSettings; breadth: BreadthSettings; management: PositionManagement;
-  onRsiPeriod: (value: number) => void; onRsiEntry: (value: number) => void; onRsiExit: (value: number) => void; onMaxBars: (value: number) => void; onHammer: (changes: Partial<HammerSettings>) => void; onBreadth: (changes: Partial<BreadthSettings>) => void; onManagement: (changes: Partial<PositionManagement>) => void;
+  mode: BacktestMode; rsiPeriod: number; rsiEntry: number; rsiExit: number; maxBars: number; hammer: HammerSettings; breadth: BreadthSettings; sma200Filters: Sma200Filters; management: PositionManagement;
+  onRsiPeriod: (value: number) => void; onRsiEntry: (value: number) => void; onRsiExit: (value: number) => void; onMaxBars: (value: number) => void; onHammer: (changes: Partial<HammerSettings>) => void; onBreadth: (changes: Partial<BreadthSettings>) => void; onSma200Filters: (changes: Partial<Sma200Filters>) => void; onManagement: (changes: Partial<PositionManagement>) => void;
 };
 
 function ExitRule({ title, description, enabled, onEnabled, children }: { title: string; description: string; enabled: boolean; onEnabled: (value: boolean) => void; children?: React.ReactNode }) {
@@ -353,6 +360,11 @@ function StrategyStep(props: StrategyStepProps) {
   const management = props.management;
   return <div><h2 className="text-xl font-medium">Configure entrada e manejo da posição</h2><p className="mt-2 text-sm text-muted-foreground">Defina RSI, formato do Hammer e regras de saída. Quando várias saídas estão ativas, prevalece a primeira acionada.</p>
     <div className="mt-6 grid gap-5 md:grid-cols-2"><Field label="Período do RSI"><Input aria-label="Período do RSI" type="number" value={props.rsiPeriod} min="2" max="100" onChange={(event) => props.onRsiPeriod(Number(event.target.value))} /></Field><Field label="Entrada: RSI abaixo de"><Input aria-label="RSI máximo para entrada" type="number" value={props.rsiEntry} min="0" max="100" onChange={(event) => props.onRsiEntry(Number(event.target.value))} /></Field></div>
+    <h3 className="mt-8 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Filtro de tendência — MM200</h3>
+    <div className="mt-3 grid gap-5 rounded-xl border p-4 md:grid-cols-2">
+      <Field label="Preço em relação à MM200" hint="A comparação usa o fechamento do candle de sinal."><Select value={props.sma200Filters.price} onValueChange={(value) => props.onSma200Filters({ price: value as Sma200Filters["price"] })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="any">Qualquer posição</SelectItem><SelectItem value="above">Preço acima da MM200</SelectItem><SelectItem value="below">Preço abaixo da MM200</SelectItem></SelectContent></Select></Field>
+      <Field label="Inclinação da MM200" hint="Compara a MM200 atual com a da barra anterior, sem olhar dados futuros."><Select value={props.sma200Filters.slope} onValueChange={(value) => props.onSma200Filters({ slope: value as Sma200Filters["slope"] })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="any">Qualquer inclinação</SelectItem><SelectItem value="rising">MM200 ascendente</SelectItem><SelectItem value="falling">MM200 descendente</SelectItem></SelectContent></Select></Field>
+    </div>
     <h3 className="mt-8 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Padrão Hammer</h3>
     <div className={`mt-3 rounded-xl border p-4 transition-colors ${hammer.use_hammer ? "border-primary/30 bg-primary/5" : "bg-muted/20"}`}>
       <div className="flex items-start justify-between gap-4"><div><strong className="block text-sm">Exigir candle Hammer</strong><p className="mt-1 text-xs leading-5 text-muted-foreground">O open e o close devem estar na faixa superior definida pelo percentil do candle.</p></div><Switch checked={hammer.use_hammer} onCheckedChange={(value) => props.onHammer({ use_hammer: value })} aria-label="Exigir candle Hammer" /></div>
@@ -432,7 +444,7 @@ function CostsStep(props: CostsProps) {
   return <div><h2 className="text-xl font-medium">Modele capital, custos e risco</h2><p className="mt-2 text-sm text-muted-foreground">Percentuais da tela são convertidos para as unidades exatas esperadas pelo motor Python.</p><div className="mt-6 grid gap-5 md:grid-cols-2"><Field label="Capital inicial"><Input type="number" value={props.initialCapital} min="1" onChange={(event) => props.onInitialCapital(Number(event.target.value))} /></Field>{props.mode === "portfolio" ? <><Field label="Máximo de posições (0 = sem limite)"><Input type="number" value={props.maxPositions} min="0" onChange={(event) => props.onMaxPositions(Number(event.target.value))} /></Field><Field label="Alocação por posição (%)"><Input type="number" value={props.pctPerTrade} min="0.01" max="100" step="0.1" onChange={(event) => props.onPctPerTrade(Number(event.target.value))} /></Field></> : null}<Field label="Corretagem fixa por ordem"><Input type="number" value={props.commissionFixed} min="0" step="0.01" onChange={(event) => props.onCommissionFixed(Number(event.target.value))} /></Field><Field label="Custo variável por ordem (%)"><Input type="number" value={props.commissionPct} min="0" max="100" step="0.01" onChange={(event) => props.onCommissionPct(Number(event.target.value))} /></Field><Field label="Slippage por ordem (%)"><Input type="number" value={props.slippagePct} min="0" max="100" step="0.01" onChange={(event) => props.onSlippagePct(Number(event.target.value))} /></Field></div></div>;
 }
 
-type ReviewProps = { mode: BacktestMode; collectionName: string; symbolCount: number; startDate: string; endDate: string; frequency: string; adjustment: string; rsiPeriod: number; rsiEntry: number; rsiExit: number; maxBars: number; hammer: HammerSettings; breadth: BreadthSettings; management: PositionManagement; initialCapital: number; maxPositions: number; pctPerTrade: number; restrictToIndex: boolean };
+type ReviewProps = { mode: BacktestMode; collectionName: string; symbolCount: number; startDate: string; endDate: string; frequency: string; adjustment: string; rsiPeriod: number; rsiEntry: number; rsiExit: number; maxBars: number; hammer: HammerSettings; breadth: BreadthSettings; sma200Filters: Sma200Filters; management: PositionManagement; initialCapital: number; maxPositions: number; pctPerTrade: number; restrictToIndex: boolean };
 function ReviewStep(props: ReviewProps) {
   const exits = [
     props.management.use_rsi_cum_exit ? `RSI(${props.management.rsi_cum_periods}) acumulado > ${props.management.rsi_cum_threshold}` : null,
@@ -446,12 +458,17 @@ function ReviewStep(props: ReviewProps) {
   const hammer = props.hammer.use_hammer
     ? `Percentil ${props.hammer.hammer_percentile} · ${props.hammer.hammer_require_bullish_close ? "fechamento altista" : "qualquer cor"} · ${props.hammer.hammer_use_atr_filter ? `amplitude > ${props.hammer.hammer_atr_multiple}× ATR(${props.hammer.hammer_atr_period})` : "sem filtro ATR"}`
     : "Desativado — nenhuma entrada será gerada";
+  const sma200 = [
+    props.sma200Filters.price === "above" ? "preço acima" : props.sma200Filters.price === "below" ? "preço abaixo" : null,
+    props.sma200Filters.slope === "rising" ? "média ascendente" : props.sma200Filters.slope === "falling" ? "média descendente" : null,
+  ].filter(Boolean).join(" · ") || "Desativado";
   const rows = [
     ["Fonte", `Norgate local · ${props.collectionName}`],
     ["Universo", `${props.symbolCount.toLocaleString("pt-BR")} ativo(s) · ${props.frequency}`],
     ["Período", `${props.startDate} a ${props.endDate}`],
     ["Ajuste", props.adjustment],
     ["Entrada", `RSI(${props.rsiPeriod}) < ${props.rsiEntry}`],
+    ["MM200", sma200],
     ["Hammer", hammer],
     ["Filtro de mercado", props.mode === "portfolio" && props.breadth.enabled ? `Breadth ≥ ${props.breadth.thresholdPct}% acima da MM${props.breadth.smaPeriod}` : "Desativado"],
     ["Manejo e saídas", exits],

@@ -29,7 +29,7 @@ from src.types import (
 )
 
 
-def _entry_tab() -> dict:
+def _entry_tab(*, include_sma_200_filters: bool = True) -> dict:
     """Render entry/indicator/pattern widgets; return their raw values."""
     c1, c2 = st.columns(2)
     rsi_period = c1.number_input("RSI period", min_value=1, max_value=100, value=2, step=1,
@@ -43,6 +43,34 @@ def _entry_tab() -> dict:
                                 help="Só opera quando o close do candle de sinal ≥ este valor.")
     max_price = c4.number_input("Max price", min_value=0.0, value=0.0, step=1.0, key="p_max_price",
                                 help="Só opera quando o close do candle de sinal ≤ este valor.")
+
+    sma_200_price_filter = "any"
+    sma_200_slope_filter = "any"
+    if include_sma_200_filters:
+        st.markdown("**Filtro de tendência — MM200**")
+        c5, c6 = st.columns(2)
+        price_label = c5.selectbox(
+            "Preço em relação à MM200",
+            ["Qualquer posição", "Preço acima da MM200", "Preço abaixo da MM200"],
+            key="p_sma_200_price_filter",
+            help="Compara o fechamento do candle de sinal com a média móvel simples dos 200 candles anteriores, incluindo o atual.",
+        )
+        slope_label = c6.selectbox(
+            "Inclinação da MM200",
+            ["Qualquer inclinação", "MM200 ascendente", "MM200 descendente"],
+            key="p_sma_200_slope_filter",
+            help="Ascendente: MM200 atual maior que a da barra anterior. Descendente: MM200 atual menor que a anterior.",
+        )
+        sma_200_price_filter = {
+            "Qualquer posição": "any",
+            "Preço acima da MM200": "above",
+            "Preço abaixo da MM200": "below",
+        }[price_label]
+        sma_200_slope_filter = {
+            "Qualquer inclinação": "any",
+            "MM200 ascendente": "rising",
+            "MM200 descendente": "falling",
+        }[slope_label]
 
     st.markdown("**Execution timing**")
     entry_exec = st.radio(
@@ -83,6 +111,8 @@ def _entry_tab() -> dict:
     return {
         "rsi_period": rsi_period, "rsi_entry": rsi_entry,
         "min_price": min_price, "max_price": max_price,
+        "sma_200_price_filter": sma_200_price_filter,
+        "sma_200_slope_filter": sma_200_slope_filter,
         "entry_exec": entry_exec, "exit_exec": exit_exec,
         "use_hammer": use_hammer, "percentile": percentile, "require_bull": require_bull,
         "use_atr": use_atr, "atr_mult": atr_mult, "atr_period": atr_period,
@@ -590,7 +620,7 @@ def configuration_form(mode: str, *, with_run: bool):
         if mode == "screening":
             tab_e, tab_x = st.tabs(["📥 Entrada", "🚪 Saídas"])
             with tab_e:
-                e = _entry_tab()
+                e = _entry_tab(include_sma_200_filters=False)
             with tab_x:
                 ex = _exits_tab()
         else:
@@ -622,6 +652,8 @@ def configuration_form(mode: str, *, with_run: bool):
     cfg = StrategyConfig(
         rsi_period=int(e["rsi_period"]),
         rsi_entry_threshold=float(e["rsi_entry"]),
+        sma_200_price_filter=e["sma_200_price_filter"],
+        sma_200_slope_filter=e["sma_200_slope_filter"],
         min_price=float(e["min_price"]),
         max_price=float(e["max_price"]),
         patterns=PatternConfig(

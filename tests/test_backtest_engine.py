@@ -7,7 +7,7 @@ from dataclasses import replace
 import pandas as pd
 import pytest
 
-from src.backtest_engine import BacktestEngine, _OpenPosition, add_period_mfe
+from src.backtest_engine import BacktestEngine, _OpenPosition, add_period_mfe, build_signal_frame
 from src.types import (
     CommissionModel,
     CostConfig,
@@ -57,6 +57,29 @@ def test_signal_close_entry_fills_on_the_signal_bar():
     trade = result.trades.iloc[0]
     assert trade["entry_date"] == df.index[3]
     assert trade["entry_price"] == pytest.approx(109.0)  # the signal bar's close
+
+
+def test_sma_200_above_and_rising_filters_use_signal_bar_only():
+    closes = [100.0 + i for i in range(205)]
+    rows = [(close, close + 1.0, close - 2.0, close) for close in closes]
+    cfg = make_config(sma_200_price_filter="above", sma_200_slope_filter="rising")
+
+    frame = build_signal_frame(make_ohlc(rows), cfg)
+
+    assert bool(frame["entry_signal"].iloc[-1])
+    assert frame["sma_200"].iloc[-1] > frame["sma_200"].iloc[-2]
+    assert frame["close"].iloc[-1] > frame["sma_200"].iloc[-1]
+
+
+def test_sma_200_filters_reject_opposite_trend():
+    closes = [300.0 - i for i in range(205)]
+    rows = [(close, close + 1.0, close - 2.0, close) for close in closes]
+    cfg = make_config(sma_200_price_filter="above", sma_200_slope_filter="rising")
+
+    frame = build_signal_frame(make_ohlc(rows), cfg)
+
+    assert not bool(frame["entry_signal"].iloc[-1])
+    assert frame["sma_200"].iloc[-1] < frame["sma_200"].iloc[-2]
 
 
 # --------------------------------------------------------------------------- #

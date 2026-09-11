@@ -77,6 +77,8 @@ export type NorgateBacktestPayload = {
     };
     rsi_period: number;
     rsi_entry: number;
+    sma_200_price_filter?: "any" | "above" | "below";
+    sma_200_slope_filter?: "any" | "rising" | "falling";
     use_hammer: boolean;
     hammer_percentile: number;
     hammer_require_bullish_close: boolean;

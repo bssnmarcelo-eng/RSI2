@@ -78,6 +78,8 @@ def build_signal_frame(data: pd.DataFrame, config: StrategyConfig) -> pd.DataFra
     optional = [c for c in ["volume", "dividend", "split", "_member"] if c in data.columns]
     df = data[["open", "high", "low", "close", *optional]].copy()
     df["rsi"] = indicators.rsi(df["close"], config.rsi_period)
+    df["sma_200"] = indicators.sma(df["close"], 200)
+    df["sma_200_slope"] = df["sma_200"].pct_change(fill_method=None)
 
     # Candle size in ATR units (range / ATR) — the candle's "ATR multiple". Always
     # computed (independent of the optional ATR hammer filter) for the trade log.
@@ -110,6 +112,20 @@ def build_signal_frame(data: pd.DataFrame, config: StrategyConfig) -> pd.DataFra
         signal &= df["close"] >= config.min_price
     if config.max_price and config.max_price > 0:
         signal &= df["close"] <= config.max_price
+
+    if config.sma_200_price_filter == "above":
+        signal &= df["close"] > df["sma_200"]
+    elif config.sma_200_price_filter == "below":
+        signal &= df["close"] < df["sma_200"]
+    elif config.sma_200_price_filter != "any":
+        raise ValueError(f"Filtro de posição da MM200 inválido: {config.sma_200_price_filter}")
+
+    if config.sma_200_slope_filter == "rising":
+        signal &= df["sma_200"] > df["sma_200"].shift(1)
+    elif config.sma_200_slope_filter == "falling":
+        signal &= df["sma_200"] < df["sma_200"].shift(1)
+    elif config.sma_200_slope_filter != "any":
+        raise ValueError(f"Filtro de inclinação da MM200 inválido: {config.sma_200_slope_filter}")
 
     # Point-in-time index membership: when a boolean ``_member`` column is attached
     # (Norgate source with constituent gating on), only allow entries on bars where

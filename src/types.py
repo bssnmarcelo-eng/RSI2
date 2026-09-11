@@ -288,6 +288,12 @@ class StrategyConfig:
     rsi_period: int = 2
     rsi_entry_threshold: float = 10.0
 
+    # --- Long-term trend filters (applied to the signal candle) ---
+    # ``any`` disables the respective gate.  The slope compares today's
+    # trailing SMA(200) with the prior bar's value, without look-ahead.
+    sma_200_price_filter: str = "any"   # any | above | below
+    sma_200_slope_filter: str = "any"   # any | rising | falling
+
     # --- Price filter (applied to the signal candle's close; 0 = no bound) ---
     min_price: float = 0.0   # only trade when close >= min_price
     max_price: float = 0.0   # only trade when close <= max_price

@@ -101,6 +101,8 @@ def _config(request: BacktestRequest | NorgateBacktestRequest, ticker: str = "")
         ),
         rsi_period=cfg.rsi_period,
         rsi_entry_threshold=cfg.rsi_entry,
+        sma_200_price_filter=cfg.sma_200_price_filter,
+        sma_200_slope_filter=cfg.sma_200_slope_filter,
         patterns=PatternConfig(
             use_hammer=cfg.use_hammer,
             hammer=HammerParams(
